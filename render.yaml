@@ -1,0 +1,48 @@
+# REFERENCE ONLY — Render's Blueprint (render.yaml) path now requires a paid
+# plan. Deploy on the free tier as a manual Web Service instead; see the README
+# section "Deploying to Render (free tier)". This file documents the exact
+# build/start commands and env vars to enter in the dashboard.
+services:
+  - type: web
+    name: nexus-resume-uploader
+    runtime: python
+    plan: free
+    region: oregon           # change if you prefer another region
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.8"
+      # --- session / login ---
+      - key: SECRET_KEY
+        generateValue: true          # Render generates a strong random value
+      - key: COOKIE_SECURE
+        value: "true"
+      # --- user store (durable) + bootstrap admin ---
+      - key: MONGODB_URI
+        sync: false                  # MongoDB Atlas mongodb+srv://… — set in dashboard
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false                  # first admin's password — set in dashboard
+      # --- Nexus API ---
+      - key: NEXUS_BASE_URL
+        value: https://api-nexus.laboredge.com
+      - key: NEXUS_TOKEN_URL
+        value: https://api-nexus.laboredge.com/auth/oauth2/token
+      - key: NEXUS_AUTH_METHOD
+        value: password
+      - key: NEXUS_USERNAME
+        sync: false
+      - key: NEXUS_PASSWORD
+        sync: false
+      - key: NEXUS_ORG_CODE
+        sync: false
+      - key: NEXUS_DEFAULT_PROFILE
+        sync: false                  # {"referralSourceId":5638,"jobTypeIds":["TRAVEL"]}
+      # --- optional: AI extraction fallback for scanned resumes ---
+      - key: CLAUDE_EXTRACT
+        value: auto
+      - key: ANTHROPIC_API_KEY
+        sync: false

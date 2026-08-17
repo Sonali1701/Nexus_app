@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Resume Uploader</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #ffffff; --ink: #1e2a3a; --muted: #64748b;
+    --brand: #0ea5b7; --brand-dark: #0b8494; --line: #e2e8f0;
+    --ok: #16a34a; --err: #dc2626; --warn: #d97706;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 14px 28px; display: flex; align-items: center; gap: 14px; }
+  header .logo { font-size: 22px; font-weight: 700; color: var(--brand); letter-spacing: .5px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  main { max-width: 1100px; margin: 24px auto; padding: 0 20px 60px; }
+
+  .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 18px; font-size: 14px; display: none; }
+  .banner.warn { display: block; background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
+  .banner.err  { display: block; background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; }
+  .banner.ok   { display: block; background: #dcfce7; border: 1px solid #86efac; color: #166534; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tab { padding: 10px 20px; border-radius: 10px 10px 0 0; cursor: pointer; font-size: 14.5px; font-weight: 600;
+         background: #e8edf4; color: var(--muted); border: 1px solid var(--line); border-bottom: none; }
+  .tab.active { background: var(--card); color: var(--brand-dark); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 0 12px 12px 12px; padding: 22px; }
+  .card h2 { font-size: 16px; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+  .drop { border: 2px dashed #b8c4d4; border-radius: 12px; padding: 34px; text-align: center; color: var(--muted);
+          cursor: pointer; transition: all .15s; background: #fafcfe; margin-bottom: 18px; }
+  .drop.dragover { border-color: var(--brand); background: #e6fbfd; color: var(--brand-dark); }
+  .drop b { color: var(--brand-dark); }
+  .drop .small { font-size: 12px; margin-top: 6px; }
+
+  details.defaults { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px 16px; margin-bottom: 18px; }
+  details.defaults summary { font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
+  details.defaults summary .note { font-weight: 500; color: var(--ok); }
+  details.defaults .grid { margin-top: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .field input[type=text], .field input[type=number], .field select, textarea, input.wide {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font-size: 13.5px; background: #fff; color: var(--ink);
+  }
+  .field select { height: 34px; }
+  .field select:disabled { background: #f1f5f9; color: var(--muted); }
+  .field input:focus, textarea:focus, input.wide:focus, .field select:focus { outline: 2px solid #bae6fd; border-color: var(--brand); }
+  .field label .req { color: var(--err); }
+  .jobtypes { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-top: 4px; }
+  .jobtypes label { font-size: 13px; display: flex; gap: 5px; align-items: center; color: var(--ink); }
+  textarea { font-family: Consolas, monospace; font-size: 12.5px; min-height: 54px; resize: vertical; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px;
+       padding: 8px 8px; border-bottom: 2px solid var(--line); }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td input { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .fname { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .fsize { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .status { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .status.queued { color: var(--muted); }
+  .status.uploading { color: var(--warn); }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); cursor: help; }
+  .status.extracting { color: #7c3aed; }
+  td input.miss { border-color: #fca5a5; background: #fef2f2; }
+  .exbadge { font-size: 10.5px; color: var(--muted); display: block; margin-top: 2px; }
+  .rowdel { color: var(--muted); cursor: pointer; border: none; background: none; font-size: 16px; }
+  .rowdel:hover { color: var(--err); }
+
+  .actions { display: flex; gap: 12px; margin-top: 18px; align-items: center; }
+  button.primary { background: var(--brand); color: #fff; border: none; padding: 10px 26px; border-radius: 8px;
+                   font-size: 14.5px; font-weight: 600; cursor: pointer; }
+  button.primary:hover { background: var(--brand-dark); }
+  button.primary:disabled { background: #a6b6c6; cursor: not-allowed; }
+  button.ghost { background: none; border: 1px solid var(--line); color: var(--muted); padding: 9px 18px;
+                 border-radius: 8px; font-size: 13.5px; cursor: pointer; }
+  button.ghost:hover { border-color: var(--brand); color: var(--brand-dark); }
+  .summary { font-size: 13.5px; color: var(--muted); margin-left: auto; }
+
+  .exrow { display: flex; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
+  .exrow .field { flex: 1; min-width: 180px; }
+  .empty { text-align: center; color: var(--muted); padding: 18px; font-size: 13.5px; }
+  .csv-controls { display: grid; grid-template-columns: minmax(260px, 1fr) 180px; gap: 14px; margin: 16px 0; }
+  .csv-controls input[type=file] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+  .csv-confirm { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; color: var(--muted); font-size: 13px; }
+  .csv-progress { margin-top: 16px; }
+  .csv-progress progress { width: 100%; height: 18px; }
+  .csv-message { margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .csv-message.err { color: var(--err); }
+  .csv-message.ok { color: var(--ok); }
+  .csv-results { max-height: 220px; overflow: auto; margin-top: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">nex&ucirc;s</div>
+  <div class="sub">Resume Uploader &mdash; bulk-push resumes to the Nexus parser</div>
+  <div class="right">
+    <a href="/admin" id="adminLink" class="ghost hidden" style="text-decoration:none;padding:9px 14px;border:1px solid var(--line);border-radius:8px;color:var(--muted)">Admin</a>
+    <button class="ghost" id="btnActivity">Activity</button>
+    <button class="ghost" id="btnTest">Test connection</button>
+    <span id="userChip" style="font-size:13px;color:var(--muted)"></span>
+    <a href="/logout" class="ghost" style="text-decoration:none;padding:9px 14px;border:1px solid var(--line);border-radius:8px;color:var(--muted)">Log out</a>
+  </div>
+</header>
+
+<!-- Activity drawer -->
+<div id="activityOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:50" onclick="if(event.target===this)this.style.display='none'">
+  <div style="position:absolute;top:0;right:0;height:100%;width:min(560px,92vw);background:#fff;box-shadow:-6px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <b style="font-size:15px">Recent activity</b>
+      <span style="color:var(--muted);font-size:12px">who uploaded what</span>
+      <button class="ghost" style="margin-left:auto" onclick="document.getElementById('activityOverlay').style.display='none'">Close</button>
+    </div>
+    <div id="activityBody" style="overflow:auto;padding:8px 0"></div>
+  </div>
+</div>
+
+<main>
+  <div class="banner" id="banner"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="new">New candidates (webhook)</div>
+    <div class="tab" data-tab="existing">Existing candidate (documents)</div>
+    <div class="tab" data-tab="csv">CSV candidate import</div>
+  </div>
+
+  <!-- ============ TAB: NEW CANDIDATES ============ -->
+  <section class="card" id="tab-new">
+    <h2>Create candidates with resumes</h2>
+    <p class="hint">Each resume creates a new candidate via the <b>Webhook Profile Data</b> API and is queued for the Nexus Resume Parser. Name, email and phone are <b>extracted automatically from each resume</b> when you drop it &mdash; just review the highlighted gaps and hit upload. <span id="extractHint"></span></p>
+
+    <details class="defaults" id="defaultsPanel" open>
+      <summary id="defaultsSummary">Candidate details for this batch</summary>
+
+      <!-- live dropdowns, populated from Nexus master data -->
+      <div class="grid" id="selectorLive" style="margin-top:12px">
+        <div class="field"><label>Profession <span class="req">*</span></label>
+          <select id="sel_profession"><option value="">Loading…</option></select></div>
+        <div class="field"><label>Specialty <span class="req">*</span></label>
+          <select id="sel_specialty" disabled><option value="">Select a profession first</option></select></div>
+        <div class="field"><label>State <span class="req">*</span></label>
+          <select id="sel_state"><option value="">(none)</option></select></div>
+      </div>
+
+      <!-- fallback if master data can't be loaded (e.g. not connected) -->
+      <div class="grid hidden" id="selectorManual" style="margin-top:12px">
+        <div class="field"><label>Profession ID</label><input type="number" id="d_professionId" placeholder="e.g. 123"></div>
+        <div class="field"><label>Specialty ID</label><input type="number" id="d_specialtyId" placeholder="e.g. 123"></div>
+        <div class="field"><label>State ID</label><input type="number" id="d_stateId" placeholder="e.g. 123"></div>
+      </div>
+      <div class="hint" id="selectorNote" style="display:none;margin:8px 0 0"></div>
+
+      <div class="jobtypes" style="margin-top:12px">
+        <span style="font-size:12px;color:var(--muted)">Job types:</span>
+        <label><input type="checkbox" class="jt" value="PERM"> PERM</label>
+        <label><input type="checkbox" class="jt" value="TRAVEL" checked> TRAVEL</label>
+        <label><input type="checkbox" class="jt" value="PERDIEM"> PERDIEM</label>
+        <label><input type="checkbox" class="jt" value="LOCAL"> LOCAL</label>
+      </div>
+
+      <details style="margin-top:14px">
+        <summary style="font-size:12px;font-weight:600;color:var(--muted);cursor:pointer">Advanced (optional)</summary>
+        <div class="grid" style="margin-top:10px">
+          <div class="field"><label>Division ID</label><input type="number" id="d_divisionId"></div>
+          <div class="field"><label>Job ID</label><input type="number" id="d_jobId" placeholder="skips profession/specialty"></div>
+          <div class="field"><label>Referral Source ID</label><input type="number" id="d_referralSourceId" placeholder="admin default"></div>
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label>Extra profileData JSON (merged into every candidate)</label>
+          <textarea id="d_extra" placeholder='{"travelStatus": true, "licenseStateIds": [1,2]}'></textarea>
+        </div>
+      </details>
+    </details>
+
+    <div class="drop" id="dropNew">
+      <div><b>Drop resumes here</b> or click to browse</div>
+      <div class="small">PDF preferred &middot; max 10 MB each &middot; multiple files allowed</div>
+      <input type="file" id="fileNew" multiple accept=".pdf,.doc,.docx,.rtf,.txt" class="hidden">
+    </div>
+
+    <table id="tblNew" class="hidden">
+      <thead><tr>
+        <th style="width:26%">File</th><th>First name</th><th>Last name</th>
+        <th style="width:20%">Email</th><th>Phone</th><th style="width:110px">Status</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="emptyNew">No resumes added yet.</div>
+
+    <div class="actions">
+      <button class="primary" id="btnUploadNew">Upload all to Nexus</button>
+      <button class="ghost" id="btnClearNew">Clear</button>
+      <div class="summary" id="sumNew"></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: EXISTING CANDIDATE ============ -->
+  <section class="card hidden" id="tab-existing">
+    <h2>Upload resumes to an existing candidate</h2>
+    <p class="hint">Files are uploaded under the <b>Candidate Resume</b> document type (auto-detected) and placed in the parsing queue. Batches are split automatically to stay under the 20 MB request cap.</p>
+
+    <div class="exrow">
+      <div class="field"><label>Candidate ID *</label><input type="number" id="e_candidateId" class="wide" placeholder="e.g. 38567254"></div>
+      <div class="field"><label>Note (applied to each document, optional)</label><input type="text" id="e_notes" class="wide" placeholder="Resume uploaded via API for parsing"></div>
+      <div class="field"><label>Document type ID (blank = auto-detect)</label><input type="number" id="e_docTypeId" class="wide" placeholder="auto"></div>
+    </div>
+
+    <div class="drop" id="dropEx">
+      <div><b>Drop resumes here</b> or click to browse</div>
+      <div class="small">PDF preferred &middot; max 10 MB each &middot; multiple files allowed</div>
+      <input type="file" id="fileEx" multiple accept=".pdf,.doc,.docx,.rtf,.txt" class="hidden">
+    </div>
+
+    <table id="tblEx" class="hidden">
+      <thead><tr>
+        <th style="width:45%">File</th><th>Size</th><th style="width:160px">Status</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="emptyEx">No resumes added yet.</div>
+
+    <div class="actions">
+      <button class="primary" id="btnUploadEx">Upload all to Nexus</button>
+      <button class="ghost" id="btnClearEx">Clear</button>
+      <div class="summary" id="sumEx"></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: SAFE CSV CANDIDATE IMPORT ============ -->
+  <section class="card hidden" id="tab-csv">
+    <h2>Import enriched candidate CSV</h2>
+    <p class="hint">Select one or more supported U.S. candidate CSVs. Profession is detected from Headline first and PDL job title second; profiles without a confident profession match are excluded. Each accepted row is assigned to the state in its Location. The preview requires confidence 3+ when supplied, prefers personal email/mobile-phone columns, deduplicates contacts, and checks Nexus before creation.</p>
+
+    <div class="csv-controls">
+      <div class="field"><label>CSV file(s) *</label>
+        <input type="file" id="csvFile" multiple accept=".csv,text/csv"></div>
+      <div class="field"><label>Default job type *</label>
+        <select id="csvJobType">
+          <option value="">Choose…</option>
+          <option value="PERM">PERM</option>
+          <option value="TRAVEL">TRAVEL</option>
+          <option value="LOCAL">LOCAL</option>
+          <option value="PERDIEM">PERDIEM</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="ghost" id="btnCsvPreview">Preview safe rows</button>
+      <button class="primary" id="btnCsvImport" disabled>Import safe rows to Nexus</button>
+      <button class="ghost hidden" id="btnCsvCancel">Stop import</button>
+    </div>
+    <label class="csv-confirm">
+      <input type="checkbox" id="csvConfirm">
+      <span>I reviewed the dry run and detected professions. This creates real Nexus candidates; license or source details will be stored in Candidate Highlights.</span>
+    </label>
+
+    <div id="csvMessage" class="csv-message">Choose one or more CSVs, then run Preview. No records are created during preview.</div>
+    <div id="csvProgress" class="csv-progress hidden">
+      <progress id="csvProgressBar" value="0" max="1"></progress>
+      <div id="csvProgressText" class="csv-message"></div>
+    </div>
+
+    <table id="csvPreviewTable" class="hidden" style="margin-top:16px">
+      <thead><tr><th>File / row</th><th>State</th><th>Profession</th><th>Name</th><th>Email</th><th>Phone</th><th>License / source</th><th>Confidence</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="csvResults" class="csv-results"></div>
+  </section>
+</main>
+
+<script>
+const MAX_MB = 10, MAX_BYTES = MAX_MB * 1024 * 1024;
+const $ = (id) => document.getElementById(id);
+const banner = $("banner");
+
+function showBanner(cls, html) { banner.className = "banner " + cls; banner.innerHTML = html; }
+function fmtSize(b) { return b > 1024*1024 ? (b/1048576).toFixed(2) + " MB" : Math.ceil(b/1024) + " KB"; }
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+function apiErrorText(j) {
+  const body = j && (j.nexusBody != null ? j.nexusBody : j.error);
+  if (typeof body === "string") return body || "Unknown Nexus error";
+  if (!body) return "Unknown Nexus error";
+  const parts = [body.errorCode, body.message, body.detail, body.title, body.error]
+    .filter((v, i, a) => v && a.indexOf(v) === i);
+  return parts.length ? parts.join(": ") : JSON.stringify(body);
+}
+
+/* ---- tabs ---- */
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  $("tab-new").classList.toggle("hidden", t.dataset.tab !== "new");
+  $("tab-existing").classList.toggle("hidden", t.dataset.tab !== "existing");
+  $("tab-csv").classList.toggle("hidden", t.dataset.tab !== "csv");
+}));
+
+/* ---- config status banner + admin defaults ---- */
+let serverDefaults = {};
+
+function initJobTypes() {
+  const saved = localStorage.getItem("nexus_jobTypes");
+  const jt = saved ? JSON.parse(saved) : (serverDefaults.jobTypeIds || ["TRAVEL"]);
+  document.querySelectorAll(".jt").forEach(c => { c.checked = jt.includes(c.value); });
+}
+document.querySelectorAll(".jt").forEach(c => c.addEventListener("change", () => {
+  localStorage.setItem("nexus_jobTypes",
+    JSON.stringify([...document.querySelectorAll(".jt:checked")].map(x => x.value)));
+}));
+
+fetch("/api/status").then(r => r.json()).then(s => {
+  if (!s.configured) {
+    showBanner("warn", "<b>Nexus credentials not configured.</b> Copy <code>.env.example</code> to <code>.env</code>, fill in your OAuth API details (or a static token), then restart the app.");
+  }
+  const eh = $("extractHint");
+  if (eh) {
+    eh.innerHTML = s.claudeAvailable
+      ? "AI-assisted extraction is <b>on</b> (covers scanned PDFs too)."
+      : "AI-assisted extraction is <b>off</b> (no Anthropic credentials) &mdash; using built-in heuristics only.";
+  }
+  serverDefaults = s.profileDefaults || {};
+  if (serverDefaults.referralSourceId != null)
+    $("d_referralSourceId").placeholder = serverDefaults.referralSourceId + " (admin default)";
+  const u = s.user || {};
+  $("userChip").textContent = u.name ? ("Signed in as " + u.name) : "";
+  if (u.is_admin) $("adminLink").classList.remove("hidden");
+  initJobTypes();
+  loadMaster();
+}).catch(() => { initJobTypes(); loadMaster(); });
+
+/* redirect to login if the session expires mid-use */
+function handleAuth(resp) {
+  if (resp && resp.status === 401) { window.location = "/login"; return true; }
+  return false;
+}
+
+/* ---- activity drawer ---- */
+$("btnActivity").addEventListener("click", async () => {
+  const body = $("activityBody");
+  body.innerHTML = '<div style="padding:20px;color:var(--muted)">Loading…</div>';
+  $("activityOverlay").style.display = "block";
+  try {
+    const r = await fetch("/api/activity");
+    if (handleAuth(r)) return;
+    const j = await r.json();
+    const rows = (j.entries || []);
+    if (!rows.length) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">No activity recorded yet this session.</div>'; return; }
+    const icon = { create_candidate: "🧑", upload_document: "📄", csv_create_candidate: "📊", login: "🔑", logout: "🚪" };
+    body.innerHTML = rows.map(e => {
+      const when = (e.ts || "").replace("T", " ").replace(/(\+00:00|Z)$/, " UTC");
+      const ok = e.ok ? "" : ' style="color:var(--err)"';
+      const bits = [e.filename, e.name, e.candidateId ? ("candidate " + e.candidateId) : "", e.detail]
+        .filter(Boolean).map(esc).join(" · ");
+      return `<div style="padding:9px 20px;border-bottom:1px solid var(--line);font-size:13px"${ok}>
+        <div><b>${esc(e.user || "?")}</b> ${icon[e.action] || "•"} ${esc((e.action||"").replace(/_/g," "))}${e.ok ? "" : " — failed"}</div>
+        <div style="color:var(--muted);font-size:12px;margin-top:2px">${when}${bits ? " · " + bits : ""}</div>
+      </div>`;
+    }).join("");
+  } catch (ex) {
+    body.innerHTML = '<div style="padding:20px;color:var(--err)">Could not load activity: ' + esc(ex.message) + '</div>';
+  }
+});
+
+/* ---- master data: populate Profession / Specialty / State dropdowns ---- */
+let allSpecialties = [], allStates = [];
+
+function opt(value, label) {
+  const o = document.createElement("option");
+  o.value = value; o.textContent = label;
+  return o;
+}
+
+function populateSpecialties(professionId, keepSelection) {
+  const sel = $("sel_specialty");
+  const prev = keepSelection ? sel.value : "";
+  sel.innerHTML = "";
+  if (!professionId) {
+    sel.appendChild(opt("", "Select a profession first"));
+    sel.disabled = true;
+    return;
+  }
+  // Nexus requires the specialty to belong to the chosen profession.
+  const matches = allSpecialties.filter(s => String(s.professionId) === String(professionId));
+  const list = matches.length ? matches : allSpecialties;
+  sel.appendChild(opt("", matches.length ? "Select a specialty…" : "Select a specialty… (all)"));
+  list.forEach(s => sel.appendChild(opt(s.id, s.name)));
+  sel.disabled = false;
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+async function loadMaster() {
+  let j;
+  try {
+    const r = await fetch("/api/master");
+    j = await r.json();
+  } catch (e) { j = { ok: false, error: e.message }; }
+
+  if (!j || !j.ok) {
+    // Fall back to manual numeric ID entry
+    $("selectorLive").classList.add("hidden");
+    $("selectorManual").classList.remove("hidden");
+    const note = $("selectorNote");
+    note.style.display = "block";
+    note.innerHTML = "Couldn't load lists from Nexus" +
+      (j && j.error ? " (" + esc(String(j.error)).slice(0, 160) + ")" : "") +
+      " &mdash; enter IDs manually, or fix the connection and reload.";
+    restoreManual();
+    return;
+  }
+
+  const profSel = $("sel_profession"), stateSel = $("sel_state");
+  profSel.innerHTML = ""; profSel.appendChild(opt("", "Select a profession…"));
+  (j.professions || []).forEach(p => profSel.appendChild(opt(p.id, p.name)));
+  allSpecialties = j.specialties || [];
+  allStates = j.states || [];
+  stateSel.innerHTML = ""; stateSel.appendChild(opt("", "(none)"));
+  allStates.forEach(s => stateSel.appendChild(opt(s.id, s.code ? `${s.name} (${s.code})` : s.name)));
+
+  // restore last-used selections
+  const savedProf = localStorage.getItem("nexus_sel_profession") || "";
+  if ([...profSel.options].some(o => o.value === savedProf)) profSel.value = savedProf;
+  populateSpecialties(profSel.value, false);
+  const savedSpec = localStorage.getItem("nexus_sel_specialty") || "";
+  if ([...$("sel_specialty").options].some(o => o.value === savedSpec)) $("sel_specialty").value = savedSpec;
+  const savedState = localStorage.getItem("nexus_sel_state") || "";
+  if ([...stateSel.options].some(o => o.value === savedState)) stateSel.value = savedState;
+
+  profSel.addEventListener("change", () => {
+    localStorage.setItem("nexus_sel_profession", profSel.value);
+    localStorage.removeItem("nexus_sel_specialty");
+    populateSpecialties(profSel.value, false);
+  });
+  $("sel_specialty").addEventListener("change", () =>
+    localStorage.setItem("nexus_sel_specialty", $("sel_specialty").value));
+  stateSel.addEventListener("change", () =>
+    localStorage.setItem("nexus_sel_state", stateSel.value));
+}
+
+/* ---- test connection ---- */
+$("btnTest").addEventListener("click", async () => {
+  showBanner("warn", "Testing connection to Nexus…");
+  try {
+    const r = await fetch("/api/document-types");
+    const j = await r.json();
+    if (j.ok) {
+      const n = (j.types || []).length;
+      showBanner("ok", `<b>Connected.</b> ${n} document types found. "Candidate Resume" type id: <b>${j.resumeDocTypeId ?? "not found — is the Resume Parser enabled?"}</b>`);
+    } else {
+      showBanner("err", `<b>Connection failed.</b> ${esc(j.error || "")} ${j.nexusStatus ? "(HTTP " + j.nexusStatus + ")" : ""}<br><small>${esc(typeof j.nexusBody === "string" ? j.nexusBody : JSON.stringify(j.nexusBody || ""))}</small>`);
+    }
+  } catch (e) { showBanner("err", "<b>Connection failed.</b> " + esc(e.message)); }
+});
+
+/* ---- filename -> name guess ---- */
+function guessName(filename) {
+  let base = filename.replace(/\.[^.]+$/, "");
+  base = base.replace(/resume|curriculum|vitae|\bcv\b/gi, " ")
+             .replace(/[_\-.()\[\]]+/g, " ")
+             .replace(/\d+/g, " ")
+             .replace(/\s+/g, " ").trim();
+  const parts = base.split(" ").filter(Boolean);
+  return { first: parts[0] || "", last: parts.slice(1).join(" ") || "" };
+}
+
+/* ---- generic drop zone wiring ---- */
+function wireDrop(dropId, inputId, onFiles) {
+  const drop = $(dropId), input = $(inputId);
+  drop.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { onFiles([...input.files]); input.value = ""; });
+  ["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("dragover"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("dragover"); }));
+  drop.addEventListener("drop", e => onFiles([...e.dataTransfer.files]));
+}
+
+function acceptFile(f) {
+  if (!/\.(pdf|docx?|rtf|txt)$/i.test(f.name)) { alert(f.name + ": unsupported type (use PDF/DOC/DOCX/RTF/TXT)"); return false; }
+  if (f.size > MAX_BYTES) { alert(f.name + " is over the " + MAX_MB + " MB Nexus limit"); return false; }
+  return true;
+}
+
+/* ============ NEW CANDIDATES ============ */
+let newRows = [];  // {file, el, status}
+
+wireDrop("dropNew", "fileNew", files => {
+  const added = files.filter(acceptFile).map(f => addNewRow(f));
+  refreshNew();
+  if (added.length) extractBatch(added);
+});
+
+function addNewRow(file) {
+  const g = guessName(file.name);
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><div class="fname" title="${esc(file.name)}">${esc(file.name)}</div><div class="fsize">${fmtSize(file.size)}</div></td>
+    <td><input class="r-first" value="${esc(g.first)}" placeholder="First"></td>
+    <td><input class="r-last" value="${esc(g.last)}" placeholder="Last"></td>
+    <td><input class="r-email" type="email" placeholder="email@example.com"></td>
+    <td><input class="r-phone" placeholder="(111) 222-3333"></td>
+    <td><span class="status queued">Queued</span></td>
+    <td><button class="rowdel" title="Remove">&#10005;</button></td>`;
+  tr.querySelector(".rowdel").addEventListener("click", () => {
+    newRows = newRows.filter(r => r.el !== tr); tr.remove(); refreshNew();
+  });
+  // typing in a highlighted field clears the highlight
+  tr.querySelectorAll("input").forEach(inp =>
+    inp.addEventListener("input", () => inp.classList.remove("miss")));
+  $("tblNew").querySelector("tbody").appendChild(tr);
+  const row = { file, el: tr, status: "queued", guess: g };
+  newRows.push(row);
+  return row;
+}
+
+/* ---- auto-extraction of name/email/phone from the resumes ---- */
+async function extractBatch(rows) {
+  rows.forEach(r => setStatus(r, "extracting", "Extracting…"));
+  const fd = new FormData();
+  rows.forEach(r => fd.append("files", r.file, r.file.name));
+  let data;
+  try {
+    const resp = await fetch("/api/extract", { method: "POST", body: fd });
+    data = await resp.json();
+  } catch (e) {
+    rows.forEach(r => setStatus(r, "queued", "Queued", "Extraction failed: " + e.message));
+    return;
+  }
+  const byName = {};
+  (data.results || []).forEach(res => { byName[res.filename] = res; });
+  rows.forEach(r => {
+    if (r.status === "ok") return;           // already uploaded meanwhile
+    const res = byName[r.file.name];
+    if (!res || res.error) {
+      setStatus(r, "queued", "Queued", (res && res.error) || "no extraction result");
+      return;
+    }
+    applyExtraction(r, res);
+  });
+  refreshNew();
+}
+
+function applyExtraction(row, res) {
+  const set = (cls, value) => {
+    const inp = row.el.querySelector(cls);
+    // don't clobber anything the user typed; filename name-guesses may be replaced
+    const isGuess = (cls === ".r-first" && inp.value === row.guess.first) ||
+                    (cls === ".r-last" && inp.value === row.guess.last);
+    if (value && (inp.value.trim() === "" || isGuess)) inp.value = value;
+    inp.classList.toggle("miss", inp.value.trim() === "");
+  };
+  set(".r-first", res.firstName);
+  set(".r-last", res.lastName);
+  set(".r-email", res.email);
+  set(".r-phone", res.phone);
+
+  const missing = ["r-first","r-last","r-email","r-phone"]
+    .filter(c => row.el.querySelector("." + c).value.trim() === "");
+  const srcLabel = { "heuristic": "auto-extracted", "heuristic+claude": "auto-extracted (AI-assisted)",
+                     "claude": "AI-extracted (scanned PDF)" }[res.source] || res.source;
+  if (missing.length) {
+    setStatus(row, "queued", "Fill " + missing.length + " field(s)",
+              res.note || "Could not find every field in the resume — fill the highlighted ones");
+  } else {
+    setStatus(row, "queued", "Ready", srcLabel);
+  }
+  const nameCell = row.el.querySelector(".fname").parentElement;
+  let badge = nameCell.querySelector(".exbadge");
+  if (!badge) { badge = document.createElement("span"); badge.className = "exbadge"; nameCell.appendChild(badge); }
+  badge.textContent = srcLabel;
+}
+
+function refreshNew() {
+  $("tblNew").classList.toggle("hidden", newRows.length === 0);
+  $("emptyNew").classList.toggle("hidden", newRows.length !== 0);
+  const done = newRows.filter(r => r.status === "ok").length;
+  $("sumNew").textContent = newRows.length ? `${newRows.length} file(s) · ${done} uploaded` : "";
+}
+
+function setStatus(row, cls, text, title) {
+  const s = row.el.querySelector(".status");
+  s.className = "status " + cls; s.textContent = text; s.title = title || "";
+  row.status = cls;
+}
+
+function usingManual() { return !$("selectorManual").classList.contains("hidden"); }
+
+function sharedDefaults() {
+  const num = v => { v = (v || "").toString().trim(); return v === "" ? null : Number(v); };
+  const d = {};
+  if (usingManual()) {
+    const p = num($("d_professionId").value), s = num($("d_specialtyId").value),
+          st = num($("d_stateId").value);
+    if (p !== null) d.professionId = p;
+    if (s !== null) d.specialtyId = s;
+    if (st !== null) {
+      d.stateId = st;
+      const state = allStates.find(x => String(x.id) === String(st));
+      if (state && state.countryId != null) d.countryId = Number(state.countryId);
+    }
+  } else {
+    const p = num($("sel_profession").value), s = num($("sel_specialty").value),
+          st = num($("sel_state").value);
+    if (p !== null) d.professionId = p;
+    if (s !== null) d.specialtyId = s;
+    if (st !== null) d.stateId = st;
+  }
+  // advanced (optional) numeric overrides
+  for (const [k, id] of Object.entries({ referralSourceId: "d_referralSourceId",
+                                         divisionId: "d_divisionId", jobId: "d_jobId" })) {
+    const v = num($(id).value); if (v !== null) d[k] = v;
+  }
+  const jts = [...document.querySelectorAll(".jt:checked")].map(c => c.value);
+  if (jts.length) d.jobTypeIds = jts;
+  const extra = $("d_extra").value.trim();
+  if (extra) {
+    try { Object.assign(d, JSON.parse(extra)); }
+    catch { throw new Error("Extra profileData JSON is not valid JSON."); }
+  }
+  return d;
+}
+
+// A profession + specialty (or a Job ID) is required by the webhook.
+function selectionError() {
+  const d = sharedDefaults();
+  if (!d.jobId && !d.professionId) return "Pick a profession" + (usingManual() ? " ID" : "") + " for this batch.";
+  if (!d.jobId && !d.specialtyId) return "Pick a specialty" + (usingManual() ? " ID" : "") + " for this batch.";
+  if (!d.stateId) return "Pick a state for this batch. Nexus requires it when creating a candidate.";
+  if (!d.jobTypeIds || !d.jobTypeIds.length) return "Pick at least one job type for this batch.";
+  return null;
+}
+
+// persist advanced numeric fields (dropdowns persist themselves in loadMaster)
+["d_referralSourceId","d_divisionId","d_jobId","d_extra"].forEach(id => {
+  const el = $(id);
+  el.value = localStorage.getItem("nexus_" + id) || "";
+  el.addEventListener("change", () => localStorage.setItem("nexus_" + id, el.value));
+});
+function restoreManual() {
+  ["d_professionId","d_specialtyId","d_stateId"].forEach(id => {
+    const el = $(id);
+    el.value = localStorage.getItem("nexus_" + id) || "";
+    el.addEventListener("change", () => localStorage.setItem("nexus_" + id, el.value));
+  });
+}
+
+$("btnClearNew").addEventListener("click", () => {
+  newRows = []; $("tblNew").querySelector("tbody").innerHTML = ""; refreshNew();
+});
+
+$("btnUploadNew").addEventListener("click", async () => {
+  let defaults;
+  try { defaults = sharedDefaults(); } catch (e) { showBanner("err", esc(e.message)); return; }
+
+  const selErr = selectionError();
+  if (selErr) { showBanner("err", "<b>" + esc(selErr) + "</b>"); $("defaultsPanel").open = true; return; }
+
+  const pending = newRows.filter(r => r.status !== "ok");
+  if (!pending.length) return;
+
+  // Validate rows first. A previously failed row becomes retryable as soon as
+  // its values are corrected.
+  const ready = [];
+  for (const r of pending) {
+    const first = r.el.querySelector(".r-first").value.trim();
+    const last  = r.el.querySelector(".r-last").value.trim();
+    const email = r.el.querySelector(".r-email").value.trim();
+    const phone = r.el.querySelector(".r-phone").value.trim();
+    const rowErrors = [];
+    if (!first || !last || !email || !phone) {
+      rowErrors.push("First name, last name, email and phone are required");
+    }
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) rowErrors.push("Email format is invalid");
+    const phoneDigits = phone.replace(/\D/g, "");
+    if (phone && (phoneDigits.length < 10 || phoneDigits.length > 15)) rowErrors.push("Phone must contain 10 to 15 digits");
+    if (rowErrors.length) setStatus(r, "err", "Invalid fields", rowErrors.join("; "));
+    else ready.push(r);
+  }
+  if (!ready.length) { showBanner("err", "Fill first name, last name, email and phone for each resume."); return; }
+
+  $("btnUploadNew").disabled = true;
+  banner.className = "banner";
+
+  for (const r of ready) {
+    setStatus(r, "uploading", "Uploading…");
+    const profile = Object.assign({}, defaults, {
+      firstName: r.el.querySelector(".r-first").value.trim(),
+      lastName:  r.el.querySelector(".r-last").value.trim(),
+      email:     r.el.querySelector(".r-email").value.trim(),
+      phone:     r.el.querySelector(".r-phone").value.trim(),
+    });
+    const fd = new FormData();
+    fd.append("profile_data", JSON.stringify(profile));
+    fd.append("file", r.file, r.file.name);
+    try {
+      const resp = await fetch("/api/upload/new-candidate", { method: "POST", body: fd });
+      const j = await resp.json();
+      if (j.ok) {
+        const id = (j.nexusBody && (j.nexusBody.id || j.nexusBody.Id)) || "";
+        setStatus(r, "ok", id ? "✓ id " + id : "✓ Created");
+      } else {
+        const detail = apiErrorText(j);
+        setStatus(r, "err", "✗ " + (j.nexusStatus || "failed"), detail);
+      }
+    } catch (e) {
+      setStatus(r, "err", "✗ network", e.message);
+    }
+    refreshNew();
+  }
+  $("btnUploadNew").disabled = false;
+
+  const failedRows = newRows.filter(r => r.status === "err");
+  if (failedRows.length) {
+    const details = failedRows.map(r => {
+      const status = r.el.querySelector(".status");
+      return `<div style="margin-top:6px"><b>${esc(r.file.name)}:</b> ${esc(status.title || status.textContent)}</div>`;
+    }).join("");
+    showBanner("err", `<b>${failedRows.length} upload(s) failed.</b>${details}`);
+  }
+  else showBanner("ok", "<b>All resumes uploaded.</b> Candidates are created and queued for parsing — check the Journal tab in Nexus for parser notes.");
+});
+
+/* ============ EXISTING CANDIDATE ============ */
+let exRows = [];
+
+wireDrop("dropEx", "fileEx", files => {
+  files.filter(acceptFile).forEach(f => addExRow(f));
+  refreshEx();
+});
+
+function addExRow(file) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><div class="fname" title="${esc(file.name)}">${esc(file.name)}</div></td>
+    <td class="fsize">${fmtSize(file.size)}</td>
+    <td><span class="status queued">Queued</span></td>
+    <td><button class="rowdel" title="Remove">&#10005;</button></td>`;
+  tr.querySelector(".rowdel").addEventListener("click", () => {
+    exRows = exRows.filter(r => r.el !== tr); tr.remove(); refreshEx();
+  });
+  $("tblEx").querySelector("tbody").appendChild(tr);
+  exRows.push({ file, el: tr, status: "queued" });
+}
+
+function refreshEx() {
+  $("tblEx").classList.toggle("hidden", exRows.length === 0);
+  $("emptyEx").classList.toggle("hidden", exRows.length !== 0);
+  const done = exRows.filter(r => r.status === "ok").length;
+  $("sumEx").textContent = exRows.length ? `${exRows.length} file(s) · ${done} uploaded` : "";
+}
+
+$("btnClearEx").addEventListener("click", () => {
+  exRows = []; $("tblEx").querySelector("tbody").innerHTML = ""; refreshEx();
+});
+
+$("btnUploadEx").addEventListener("click", async () => {
+  const cid = $("e_candidateId").value.trim();
+  if (!cid) { showBanner("err", "Enter a candidate ID."); return; }
+  const pending = exRows.filter(r => r.status !== "ok");
+  if (!pending.length) return;
+
+  $("btnUploadEx").disabled = true;
+  banner.className = "banner";
+  pending.forEach(r => setStatus(r, "uploading", "Uploading…"));
+
+  const fd = new FormData();
+  pending.forEach(r => fd.append("files", r.file, r.file.name));
+  fd.append("notes", $("e_notes").value.trim());
+  fd.append("doc_type_id", $("e_docTypeId").value.trim());
+
+  try {
+    const resp = await fetch("/api/upload/existing/" + encodeURIComponent(cid), { method: "POST", body: fd });
+    const j = await resp.json();
+    const byName = {};
+    (j.results || []).forEach(res => { byName[res.filename] = res; });
+    pending.forEach(r => {
+      const res = byName[r.file.name];
+      if (res && res.ok) setStatus(r, "ok", res.documentId ? "✓ doc " + res.documentId : "✓ Uploaded");
+      else setStatus(r, "err", "✗ failed", (res && res.error) || j.error || "Unknown error");
+    });
+    if (j.ok) showBanner("ok", `<b>All documents uploaded</b> under document type id ${j.docTypeId}. They are queued for parsing.`);
+    else {
+      const details = pending.filter(r => r.status === "err").map(r => {
+        const status = r.el.querySelector(".status");
+        return `<div style="margin-top:6px"><b>${esc(r.file.name)}:</b> ${esc(status.title || status.textContent)}</div>`;
+      }).join("");
+      showBanner("err", "<b>Some uploads failed.</b>" + details);
+    }
+  } catch (e) {
+    pending.forEach(r => setStatus(r, "err", "✗ network", e.message));
+    showBanner("err", "Upload failed: " + esc(e.message));
+  }
+  $("btnUploadEx").disabled = false;
+  refreshEx();
+});
+
+/* ============ SAFE CSV CANDIDATE IMPORT ============ */
+let selectedCsv = [], csvPreview = null, csvImportRunning = false;
+
+function csvSetMessage(cls, html) {
+  const el = $("csvMessage");
+  el.className = "csv-message" + (cls ? " " + cls : "");
+  el.innerHTML = html;
+}
+
+function syncCsvImportButton() {
+  $("btnCsvImport").disabled = csvImportRunning || !selectedCsv.length || !csvPreview ||
+    !csvPreview.summary.safeRows || !$("csvJobType").value || !$("csvConfirm").checked;
+  $("btnCsvPreview").disabled = csvImportRunning || !selectedCsv.length;
+}
+
+function resetCsvPreview() {
+  csvPreview = null;
+  $("csvPreviewTable").classList.add("hidden");
+  $("csvPreviewTable").querySelector("tbody").innerHTML = "";
+  $("csvResults").innerHTML = "";
+  $("csvProgress").classList.add("hidden");
+  $("csvConfirm").checked = false;
+  syncCsvImportButton();
+}
+
+$("csvFile").addEventListener("change", e => {
+  selectedCsv = [...e.target.files];
+  resetCsvPreview();
+  const totalBytes = selectedCsv.reduce((total, file) => total + file.size, 0);
+  csvSetMessage("", selectedCsv.length
+    ? `<b>${selectedCsv.length} CSV file(s)</b> selected (${fmtSize(totalBytes)}). Run Preview; no Nexus records will be created.`
+    : "Choose one or more CSVs, then run Preview.");
+});
+$("csvJobType").addEventListener("change", syncCsvImportButton);
+$("csvConfirm").addEventListener("change", syncCsvImportButton);
+
+$("btnCsvPreview").addEventListener("click", async () => {
+  if (!selectedCsv.length) { csvSetMessage("err", "Choose one or more CSV files first."); return; }
+  $("btnCsvPreview").disabled = true;
+  csvSetMessage("", "Reading and validating the complete CSV…");
+  const fd = new FormData();
+  selectedCsv.forEach(file => fd.append("file", file, file.name));
+  try {
+    const response = await fetch("/api/csv/preview", { method: "POST", body: fd });
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "CSV preview failed");
+    csvPreview = data;
+    const s = data.summary;
+    const reasons = Object.entries(s.rejectedByReason || {})
+      .map(([reason, count]) => `${count} ${esc(reason)}`).join("; ");
+    const states = Object.entries(s.safeByState || {})
+      .map(([state, count]) => `${count} ${esc(state)}`).join(", ");
+    const professions = Object.entries(s.safeByProfession || {})
+      .map(([profession, count]) => `${count} ${esc(profession)}`).join(", ");
+    csvSetMessage("ok", `<b>${s.safeRows} safe rows</b> will be eligible for import from ${s.totalRows} total. ` +
+      `Detected ${esc(s.schemaLabel || "supported CSV")} across ${s.fileCount || 1} file(s) ` +
+      `(threshold ${s.minimumLikelihood}+${states ? "; " + states : ""}). ` +
+      `${professions ? "Professions: " + professions + ". " : ""}` +
+      `${s.rejectedRows} excluded${reasons ? ": " + reasons : ""}.`);
+    const tbody = $("csvPreviewTable").querySelector("tbody");
+    tbody.innerHTML = (data.sample || []).map(r => `<tr>
+      <td><small>${esc(r.sourceFile || "")}</small><br>${r.sourceRow}</td>
+      <td>${esc(r.stateCode || "")}</td>
+      <td>${esc(r.professionName || "RN")}<br><small>${esc(r.professionSource || "license")}</small></td>
+      <td>${esc(r.firstName + " " + r.lastName)}</td>
+      <td>${esc(r.email)}<br><small>${esc(r.emailType || "")}</small></td>
+      <td>${esc(r.phone)}<br><small>${esc(r.phoneSource || "")}</small></td>
+      <td>${esc(r.licenseNumber || r.headline || r.sourceType || "")}</td>
+      <td>${r.likelihood == null ? "not supplied" : r.likelihood + "/10"}</td></tr>`).join("");
+    $("csvPreviewTable").classList.toggle("hidden", !(data.sample || []).length);
+  } catch (e) {
+    csvPreview = null;
+    csvSetMessage("err", esc(e.message));
+  }
+  syncCsvImportButton();
+});
+
+function renderCsvJob(job) {
+  const total = job.total || 1;
+  $("csvProgressBar").max = total;
+  $("csvProgressBar").value = job.processed || 0;
+  $("csvProgressText").textContent =
+    `${job.status}: ${job.processed}/${job.total} processed · ${job.created} created · ` +
+    `${job.skipped} existing · ${job.failed} failed` + (job.current ? ` · ${job.current}` : "");
+  const recent = job.recentResults || [];
+  $("csvResults").innerHTML = recent.slice().reverse().map(r => {
+    const detail = r.status === "created" ? (r.candidateId ? `candidate ${r.candidateId}` : "created")
+      : (r.reason || r.status);
+    return `<div><b>${esc(r.sourceFile || "CSV")} row ${r.sourceRow} (${esc(r.stateCode || "")}) — ${esc(r.name)}:</b> ${esc(detail)}</div>`;
+  }).join("");
+}
+
+async function pollCsvJob(jobId) {
+  try {
+    const response = await fetch("/api/csv/import/" + encodeURIComponent(jobId));
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Could not read import progress");
+    const job = data.job;
+    renderCsvJob(job);
+    if (["completed", "cancelled"].includes(job.status)) {
+      csvImportRunning = false;
+      $("btnCsvCancel").classList.add("hidden");
+      syncCsvImportButton();
+      const cls = job.failed ? "err" : "ok";
+      csvSetMessage(cls, `<b>Import ${job.status}.</b> ${job.created} created, ` +
+        `${job.skipped} already existed, ${job.failed} failed. ` +
+        `<a href="/api/csv/import/${encodeURIComponent(jobId)}/report" target="_blank">Download full report</a>.`);
+      return;
+    }
+    setTimeout(() => pollCsvJob(jobId), 1200);
+  } catch (e) {
+    csvImportRunning = false;
+    $("btnCsvCancel").classList.add("hidden");
+    syncCsvImportButton();
+    csvSetMessage("err", "Progress check failed: " + esc(e.message));
+  }
+}
+
+$("btnCsvImport").addEventListener("click", async () => {
+  if (!selectedCsv.length || !csvPreview || !$("csvJobType").value ||
+      !$("csvConfirm").checked) return;
+  csvImportRunning = true;
+  syncCsvImportButton();
+  $("csvProgress").classList.remove("hidden");
+  csvSetMessage("", "Starting the confirmed Nexus import…");
+  const fd = new FormData();
+  selectedCsv.forEach(file => fd.append("file", file, file.name));
+  fd.append("job_type", $("csvJobType").value);
+  fd.append("confirmed", "true");
+  try {
+    const response = await fetch("/api/csv/import", { method: "POST", body: fd });
+    const data = await response.json();
+    if (!data.ok) throw new Error(apiErrorText(data));
+    const jobId = data.job.jobId;
+    $("btnCsvCancel").disabled = false;
+    $("btnCsvCancel").classList.remove("hidden");
+    $("btnCsvCancel").dataset.jobId = jobId;
+    renderCsvJob(data.job);
+    pollCsvJob(jobId);
+  } catch (e) {
+    csvImportRunning = false;
+    $("btnCsvCancel").classList.add("hidden");
+    syncCsvImportButton();
+    csvSetMessage("err", esc(e.message));
+  }
+});
+
+$("btnCsvCancel").addEventListener("click", async () => {
+  const jobId = $("btnCsvCancel").dataset.jobId;
+  if (!jobId) return;
+  $("btnCsvCancel").disabled = true;
+  await fetch(`/api/csv/import/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+  csvSetMessage("", "Stop requested. The current candidate check will finish first.");
+});
+</script>
+</body>
+</html>

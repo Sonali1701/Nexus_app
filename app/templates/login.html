@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · Nexus Resume Uploader</title>
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --ink:#1e2a3a; --muted:#64748b; --brand:#0ea5b7;
+          --brand-dark:#0b8494; --line:#e2e8f0; --err:#dc2626; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--ink);
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:32px 30px; width:100%; max-width:380px; box-shadow:0 8px 30px rgba(30,42,58,.06); }
+  .logo { font-size:26px; font-weight:700; color:var(--brand); letter-spacing:.5px; text-align:center; }
+  .sub { color:var(--muted); font-size:13px; text-align:center; margin:4px 0 22px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:14px 0 4px; }
+  input { width:100%; padding:10px 11px; border:1px solid var(--line); border-radius:8px;
+          font-size:14px; background:#fff; color:var(--ink); }
+  input:focus { outline:2px solid #bae6fd; border-color:var(--brand); }
+  button { width:100%; margin-top:20px; background:var(--brand); color:#fff; border:none;
+           padding:11px; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; }
+  button:hover { background:var(--brand-dark); }
+  button:disabled { background:#a6b6c6; cursor:not-allowed; }
+  .err { display:none; margin-top:14px; background:#fee2e2; border:1px solid #fca5a5;
+         color:#991b1b; padding:9px 12px; border-radius:8px; font-size:13px; }
+</style>
+</head>
+<body>
+  <form class="card" id="loginForm">
+    <div class="logo">nex&ucirc;s</div>
+    <div class="sub">Resume Uploader &mdash; sign in</div>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" autofocus required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" id="btn">Sign in</button>
+    <div class="err" id="err"></div>
+  </form>
+<script>
+  const form = document.getElementById("loginForm");
+  const err = document.getElementById("err");
+  const btn = document.getElementById("btn");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.style.display = "none";
+    btn.disabled = true; btn.textContent = "Signing in…";
+    try {
+      const body = new URLSearchParams({
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+      });
+      const r = await fetch("/login", { method: "POST", body });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) { window.location = "/"; return; }
+      err.textContent = j.error || "Sign in failed."; err.style.display = "block";
+    } catch (ex) {
+      err.textContent = "Network error: " + ex.message; err.style.display = "block";
+    }
+    btn.disabled = false; btn.textContent = "Sign in";
+  });
+</script>
+</body>
+</html>

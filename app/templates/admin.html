@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User admin · Nexus Resume Uploader</title>
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --ink:#1e2a3a; --muted:#64748b; --brand:#0ea5b7;
+          --brand-dark:#0b8494; --line:#e2e8f0; --ok:#16a34a; --err:#dc2626; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:14px 28px; display:flex; align-items:center; gap:14px; }
+  header .logo { font-size:22px; font-weight:700; color:var(--brand); }
+  header .sub { color:var(--muted); font-size:13px; }
+  header .right { margin-left:auto; display:flex; gap:10px; align-items:center; }
+  a.btn, button.btn { text-decoration:none; padding:9px 16px; border-radius:8px; font-size:13.5px;
+        cursor:pointer; border:1px solid var(--line); background:none; color:var(--muted); }
+  a.btn:hover, button.btn:hover { border-color:var(--brand); color:var(--brand-dark); }
+  main { max-width:900px; margin:24px auto; padding:0 20px 60px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; margin-bottom:20px; }
+  h2 { font-size:16px; margin-bottom:14px; }
+  .banner { border-radius:9px; padding:10px 14px; margin-bottom:16px; font-size:13.5px; display:none; }
+  .banner.ok { display:block; background:#dcfce7; border:1px solid #86efac; color:#166534; }
+  .banner.err { display:block; background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .field { flex:1; min-width:150px; }
+  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .field input { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:14px; }
+  .field.check { flex:0 0 auto; min-width:auto; display:flex; align-items:center; gap:6px; padding-bottom:9px; }
+  button.primary { background:var(--brand); color:#fff; border:none; padding:9px 20px; border-radius:8px;
+        font-size:14px; font-weight:600; cursor:pointer; }
+  button.primary:hover { background:var(--brand-dark); }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th { text-align:left; color:var(--muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.4px;
+       padding:8px; border-bottom:2px solid var(--line); }
+  td { padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; background:#e0f2fe; color:#0369a1; }
+  .pill.member { background:#f1f5f9; color:var(--muted); }
+  .act { border:none; background:none; cursor:pointer; font-size:12.5px; color:var(--brand-dark); padding:2px 6px; }
+  .act.danger { color:var(--err); }
+  .muted { color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">nex&ucirc;s</div>
+  <div class="sub">User administration</div>
+  <div class="right">
+    <a href="/" class="btn">&larr; Back to uploader</a>
+    <a href="/logout" class="btn">Log out</a>
+  </div>
+</header>
+
+<main>
+  <div class="banner" id="banner"></div>
+
+  <div class="card">
+    <h2>Add a user</h2>
+    <form class="row" id="addForm">
+      <div class="field"><label>Username</label><input id="u" autocomplete="off" required></div>
+      <div class="field"><label>Full name</label><input id="n" autocomplete="off"></div>
+      <div class="field"><label>Password</label><input id="p" type="text" autocomplete="new-password" required></div>
+      <div class="field check"><label style="margin:0"><input type="checkbox" id="a"> Admin</label></div>
+      <button class="primary" type="submit">Add user</button>
+    </form>
+    <p class="muted" style="margin-top:10px">Passwords are stored hashed. Share the password with the person; they change nothing to sign in.</p>
+  </div>
+
+  <div class="card">
+    <h2>Users</h2>
+    <table>
+      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th style="width:230px">Actions</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const banner = $("banner");
+  let me = "";
+  function flash(cls, msg) { banner.className = "banner " + cls; banner.textContent = msg;
+    if (cls === "ok") setTimeout(() => { banner.className = "banner"; }, 3000); }
+  function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+  function authRedirect(r) { if (r.status === 401) { window.location = "/login"; return true; }
+    if (r.status === 403) { window.location = "/"; return true; } return false; }
+
+  async function load() {
+    const r = await fetch("/api/admin/users");
+    if (authRedirect(r)) return;
+    const j = await r.json();
+    me = j.you || "";
+    const rows = j.users || [];
+    $("rows").innerHTML = rows.map(u => {
+      const isMe = (u.username || "").toLowerCase() === me.toLowerCase();
+      const role = u.is_admin ? '<span class="pill">Admin</span>' : '<span class="pill member">Member</span>';
+      const roleBtn = u.is_admin
+        ? `<button class="act" data-act="role" data-u="${esc(u.username)}" data-v="false">Make member</button>`
+        : `<button class="act" data-act="role" data-u="${esc(u.username)}" data-v="true">Make admin</button>`;
+      const del = isMe ? '' : `<button class="act danger" data-act="del" data-u="${esc(u.username)}">Remove</button>`;
+      return `<tr>
+        <td><b>${esc(u.username)}</b>${isMe ? ' <span class="muted">(you)</span>' : ''}</td>
+        <td>${esc(u.name)}</td>
+        <td>${role}</td>
+        <td>
+          <button class="act" data-act="pw" data-u="${esc(u.username)}">Reset password</button>
+          ${roleBtn}
+          ${del}
+        </td></tr>`;
+    }).join("") || '<tr><td colspan="4" class="muted">No users yet.</td></tr>';
+  }
+
+  $("addForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = new URLSearchParams({ username: $("u").value, name: $("n").value,
+      password: $("p").value, is_admin: $("a").checked ? "true" : "false" });
+    const r = await fetch("/api/admin/users", { method: "POST", body });
+    if (authRedirect(r)) return;
+    const j = await r.json();
+    if (j.ok) { flash("ok", "Added " + $("u").value); $("addForm").reset(); load(); }
+    else flash("err", j.error || "Could not add user");
+  });
+
+  $("rows").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-act]"); if (!btn) return;
+    const u = btn.dataset.u, act = btn.dataset.act;
+    if (act === "pw") {
+      const pw = prompt("New password for " + u + ":"); if (!pw) return;
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(u)}/password`,
+        { method: "POST", body: new URLSearchParams({ password: pw }) });
+      if (authRedirect(r)) return;
+      const j = await r.json();
+      flash(j.ok ? "ok" : "err", j.ok ? ("Password reset for " + u) : (j.error || "Failed"));
+    } else if (act === "role") {
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(u)}/role`,
+        { method: "POST", body: new URLSearchParams({ is_admin: btn.dataset.v }) });
+      if (authRedirect(r)) return;
+      const j = await r.json();
+      if (j.ok) load(); else flash("err", j.error || "Failed");
+    } else if (act === "del") {
+      if (!confirm("Remove user " + u + "?")) return;
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(u)}`, { method: "DELETE" });
+      if (authRedirect(r)) return;
+      const j = await r.json();
+      if (j.ok) { flash("ok", "Removed " + u); load(); } else flash("err", j.error || "Failed");
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

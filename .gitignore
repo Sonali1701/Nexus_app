@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.idea/
+build/
+dist/
+*.spec.bak
+audit.log
+users.json
+master_data.txt
+dist.zip
+*.zip
