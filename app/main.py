@@ -646,20 +646,45 @@ def document_types():
         return _nexus_error_response(e)
 
 
-@app.post("/api/csv/preview")
-async def preview_candidate_csv(file: list[UploadFile] = File(...)):
-    """Validate one or more supported CSVs and report the safe import subset."""
-    if any(not (item.filename or "").lower().endswith(".csv") for item in file):
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "error": "Choose only .csv files"},
-        )
+def _parse_column_mappings(raw):
+    try:
+        mappings = json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise csv_import.CSVImportError("Column mapping is not valid JSON") from exc
+    if not isinstance(mappings, dict):
+        raise csv_import.CSVImportError("Column mapping must be an object")
+    return mappings
+
+
+@app.post("/api/csv/inspect")
+async def inspect_candidate_files(file: list[UploadFile] = File(...)):
+    """Read spreadsheet headers and suggest canonical candidate mappings."""
     try:
         named_contents = [
-            (item.filename or f"file-{index}.csv", await item.read())
+            (item.filename or f"file-{index}", await item.read())
             for index, item in enumerate(file, start=1)
         ]
-        summary, records = csv_import.parse_and_filter_many(named_contents)
+        inspection = csv_import.inspect_many(named_contents)
+    except csv_import.CSVImportError as exc:
+        return JSONResponse(
+            status_code=400, content={"ok": False, "error": str(exc)})
+    return {"ok": True, **inspection}
+
+
+@app.post("/api/csv/preview")
+async def preview_candidate_csv(
+    file: list[UploadFile] = File(...),
+    column_mapping: str = Form("{}"),
+):
+    """Validate mapped CSV/Excel files and report the safe import subset."""
+    try:
+        named_contents = [
+            (item.filename or f"file-{index}", await item.read())
+            for index, item in enumerate(file, start=1)
+        ]
+        mappings = _parse_column_mappings(column_mapping)
+        summary, records = csv_import.parse_and_filter_many(
+            named_contents, mappings=mappings)
     except csv_import.CSVImportError as exc:
         return JSONResponse(
             status_code=400, content={"ok": False, "error": str(exc)})
@@ -681,6 +706,7 @@ async def start_candidate_csv_import(
     file: list[UploadFile] = File(...),
     job_type: str = Form(...),
     confirmed: str = Form("false"),
+    column_mapping: str = Form("{}"),
 ):
     """Start a confirmed, de-duplicated candidate import in the background."""
     if confirmed.lower() != "true":
@@ -689,19 +715,22 @@ async def start_candidate_csv_import(
             content={"ok": False, "error": "Confirm the bulk import first"},
     )
     try:
-        if any(not (item.filename or "").lower().endswith(".csv") for item in file):
-            raise csv_import.CSVImportError("Choose only .csv files")
         named_contents = [
-            (item.filename or f"file-{index}.csv", await item.read())
+            (item.filename or f"file-{index}", await item.read())
             for index, item in enumerate(file, start=1)
         ]
-        summary, records = csv_import.parse_and_filter_many(named_contents)
+        mappings = _parse_column_mappings(column_mapping)
+        summary, records = csv_import.parse_and_filter_many(
+            named_contents, mappings=mappings)
         if not records:
             raise csv_import.CSVImportError("No rows passed the safe-import filter")
+        detected_professions = {
+            record.get("professionName") for record in records
+            if record.get("professionName")
+        }
         defaults = _csv_candidate_defaults(
             job_type, {record["stateCode"] for record in records},
-            {record["professionName"] for record in records}
-            if summary["schema"] == "indeed_matches" else None,
+            detected_professions or None,
         )
     except csv_import.CSVImportError as exc:
         return JSONResponse(

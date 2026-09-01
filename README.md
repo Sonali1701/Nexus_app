@@ -205,13 +205,31 @@ UI selections override `.env`. Anything else the webhook accepts (`zipCode`,
 `licenseStateIds`, `travelStatus`, social links, …) can go in the
 *Advanced → Extra profileData JSON* box.
 
-## Safe CSV candidate import
+## Safe CSV/Excel candidate import
 
-The **CSV candidate import** tab accepts one or more files from either the
-People Data Labs-enriched Kentucky license format or the Indeed candidate-match
-format. Preview is read-only, combines the selected files, and automatically
-selects only rows that meet the applicable safety rules. Do not mix the two
-export formats in one selection.
+The **CSV candidate import** tab accepts one or more `.csv`, `.xlsx`, or legacy
+`.xls` files. Column names do not need to follow a fixed template. The app
+groups files with identical layouts, automatically maps recognizable columns,
+and displays a mapping panel for review. If a required field is unclear, choose
+the correct source column and run Preview again. Different layouts and file
+types can be selected in the same batch.
+
+A custom layout needs these mapped field groups:
+
+- full name, or both first name and last name;
+- personal email or fallback email;
+- mobile phone or fallback phone;
+- combined city/state or a state column; and
+- profession, professional headline, or job title.
+
+Address, city, ZIP, company, confidence, profile/source URL, and license fields
+are optional. Custom rows require a valid U.S. state, valid email and phone, and
+a profession that can be resolved from the mapped profession/headline/title. A
+supplied confidence must be at least 3; a missing confidence is allowed. Preview
+is read-only and reports every excluded-row reason before import.
+
+The two original layouts are still recognized automatically and retain their
+stricter safety rules:
 
 For a PDL Kentucky license export:
 
@@ -332,7 +350,7 @@ app/
   store.py           user store: MongoDB (durable) or local JSON file
   audit.py           who-did-what audit log (stdout + file + in-memory)
   nexus_client.py    OAuth token cache + Nexus API calls
-  csv_import.py      supported CSV safety filters + Candidate API payload mapping
+  csv_import.py      CSV/Excel readers, column mapper, safety filters + payload mapping
   resume_extract.py  resume text extraction + heuristic/Claude field extraction
   config.py          .env-driven settings, login/session/db, upload limits
   templates/

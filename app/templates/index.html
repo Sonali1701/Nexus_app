@@ -95,6 +95,18 @@
   .csv-message.err { color: var(--err); }
   .csv-message.ok { color: var(--ok); }
   .csv-results { max-height: 220px; overflow: auto; margin-top: 12px; }
+  .mapping-panel { margin: 16px 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #f8fafc; }
+  .mapping-panel h3 { margin: 0 0 5px; font-size: 15px; }
+  .mapping-group { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .mapping-group:first-child { border-top: 0; padding-top: 4px; }
+  .mapping-title { font-size: 13px; margin-bottom: 9px; line-height: 1.4; }
+  .mapping-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 10px 14px; }
+  .mapping-field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .mapping-field select { width: 100%; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .mapping-field.core label::after { content: " *"; color: var(--err); }
+  .mapping-issues { color: var(--err); font-size: 12px; margin-top: 8px; }
+  .mapping-panel details { margin-top: 12px; }
+  .mapping-panel summary { cursor: pointer; color: var(--brand-dark); font-size: 13px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -236,12 +248,12 @@
 
   <!-- ============ TAB: SAFE CSV CANDIDATE IMPORT ============ -->
   <section class="card hidden" id="tab-csv">
-    <h2>Import enriched candidate CSV</h2>
-    <p class="hint">Select one or more supported U.S. candidate CSVs. Profession is detected from Headline first and PDL job title second; profiles without a confident profession match are excluded. Each accepted row is assigned to the state in its Location. The preview requires confidence 3+ when supplied, prefers personal email/mobile-phone columns, deduplicates contacts, and checks Nexus before creation.</p>
+    <h2>Import candidate CSV or Excel files</h2>
+    <p class="hint">Select CSV, XLSX, or XLS files with any column names. The tool maps common layouts automatically and lets you correct unclear columns before preview. Personal email and mobile phone are preferred. Confidence must be 3+ when supplied; profiles still need a valid U.S. state and a recognizable profession or headline.</p>
 
     <div class="csv-controls">
-      <div class="field"><label>CSV file(s) *</label>
-        <input type="file" id="csvFile" multiple accept=".csv,text/csv"></div>
+      <div class="field"><label>CSV/Excel file(s) *</label>
+        <input type="file" id="csvFile" multiple accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></div>
       <div class="field"><label>Default job type *</label>
         <select id="csvJobType">
           <option value="">Choose…</option>
@@ -252,8 +264,14 @@
         </select>
       </div>
     </div>
+    <div id="csvMapping" class="mapping-panel hidden">
+      <h3>Column mapping</h3>
+      <p class="hint" style="margin:0">Review the automatic choices. Fields marked * form alternative required groups: full name or first+last; personal email or email; mobile or phone; location or state; profession, headline, or job title.</p>
+      <div id="csvRecognized"></div>
+      <div id="csvMappingGroups"></div>
+    </div>
     <div class="actions">
-      <button class="ghost" id="btnCsvPreview">Preview safe rows</button>
+      <button class="ghost" id="btnCsvPreview">Analyze and preview</button>
       <button class="primary" id="btnCsvImport" disabled>Import safe rows to Nexus</button>
       <button class="ghost hidden" id="btnCsvCancel">Stop import</button>
     </div>
@@ -262,7 +280,7 @@
       <span>I reviewed the dry run and detected professions. This creates real Nexus candidates; license or source details will be stored in Candidate Highlights.</span>
     </label>
 
-    <div id="csvMessage" class="csv-message">Choose one or more CSVs, then run Preview. No records are created during preview.</div>
+    <div id="csvMessage" class="csv-message">Choose one or more CSV/Excel files, then run Preview. No records are created during preview.</div>
     <div id="csvProgress" class="csv-progress hidden">
       <progress id="csvProgressBar" value="0" max="1"></progress>
       <div id="csvProgressText" class="csv-message"></div>
@@ -799,7 +817,7 @@ $("btnUploadEx").addEventListener("click", async () => {
 });
 
 /* ============ SAFE CSV CANDIDATE IMPORT ============ */
-let selectedCsv = [], csvPreview = null, csvImportRunning = false;
+let selectedCsv = [], csvInspection = null, csvPreview = null, csvImportRunning = false;
 
 function csvSetMessage(cls, html) {
   const el = $("csvMessage");
@@ -814,7 +832,11 @@ function syncCsvImportButton() {
 }
 
 function resetCsvPreview() {
+  csvInspection = null;
   csvPreview = null;
+  $("csvMapping").classList.add("hidden");
+  $("csvRecognized").innerHTML = "";
+  $("csvMappingGroups").innerHTML = "";
   $("csvPreviewTable").classList.add("hidden");
   $("csvPreviewTable").querySelector("tbody").innerHTML = "";
   $("csvResults").innerHTML = "";
@@ -823,27 +845,115 @@ function resetCsvPreview() {
   syncCsvImportButton();
 }
 
+function invalidateCsvPreview() {
+  csvPreview = null;
+  $("csvPreviewTable").classList.add("hidden");
+  $("csvPreviewTable").querySelector("tbody").innerHTML = "";
+  $("csvConfirm").checked = false;
+  syncCsvImportButton();
+}
+
+function mappingOptions(group, selected) {
+  const options = [`<option value="">Not mapped</option>`];
+  (group.columns || []).forEach(column => {
+    const examples = (group.examples && group.examples[column] || []).slice(0, 2).join(" | ");
+    const label = examples ? `${column} — ${examples}` : column;
+    options.push(`<option value="${esc(column)}"${column === selected ? " selected" : ""}>${esc(label)}</option>`);
+  });
+  return options.join("");
+}
+
+function mappingFieldsHtml(group, tier) {
+  return (csvInspection.fields || []).filter(field => field.tier === tier).map(field => `
+    <div class="mapping-field ${field.tier}">
+      <label for="map-${group.id}-${field.key}">${esc(field.label)}</label>
+      <select id="map-${group.id}-${field.key}" class="csv-map-select"
+              data-group="${group.id}" data-field="${field.key}">
+        ${mappingOptions(group, (group.suggestedMapping || {})[field.key] || "")}
+      </select>
+    </div>`).join("");
+}
+
+function renderCsvMapping(inspection) {
+  const recognized = inspection.recognizedFiles || [];
+  $("csvRecognized").innerHTML = recognized.length
+    ? `<div class="csv-message ok"><b>Recognized layout:</b> ${recognized.map(item =>
+        `${esc(item.filename)} (${esc(item.schemaLabel)})`).join(", ")}. Existing safety rules will be used.</div>`
+    : "";
+  $("csvMappingGroups").innerHTML = (inspection.groups || []).map(group => {
+    const names = (group.files || []).map(file => esc(file.filename)).join(", ");
+    const sheets = (group.sheetNames || []).length
+      ? ` · sheet ${group.sheetNames.map(esc).join(", ")}` : "";
+    const issues = (group.issues || []).length
+      ? `<div class="mapping-issues"><b>Needs attention:</b> ${group.issues.map(esc).join("; ")}</div>` : "";
+    return `<div class="mapping-group" data-group="${group.id}">
+      <div class="mapping-title"><b>${names}</b>${sheets}<br>
+        ${group.columns.length} source columns detected.</div>
+      <div class="mapping-grid">${mappingFieldsHtml(group, "core")}</div>
+      ${issues}
+      <details><summary>Map optional address, company, confidence, license, and URL fields</summary>
+        <div class="mapping-grid" style="margin-top:9px">${mappingFieldsHtml(group, "optional")}</div>
+      </details>
+    </div>`;
+  }).join("");
+  $("csvMapping").classList.remove("hidden");
+  document.querySelectorAll(".csv-map-select").forEach(select =>
+    select.addEventListener("change", invalidateCsvPreview));
+}
+
+function collectCsvMappings() {
+  const mappings = {};
+  document.querySelectorAll(".mapping-group[data-group]").forEach(group => {
+    mappings[group.dataset.group] = {};
+    group.querySelectorAll(".csv-map-select").forEach(select => {
+      mappings[group.dataset.group][select.dataset.field] = select.value;
+    });
+  });
+  return mappings;
+}
+
+async function inspectCsvFiles() {
+  const fd = new FormData();
+  selectedCsv.forEach(file => fd.append("file", file, file.name));
+  const response = await fetch("/api/csv/inspect", { method: "POST", body: fd });
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.error || "Could not inspect spreadsheet columns");
+  csvInspection = data;
+  renderCsvMapping(data);
+  return data;
+}
+
 $("csvFile").addEventListener("change", e => {
   selectedCsv = [...e.target.files];
   resetCsvPreview();
   const totalBytes = selectedCsv.reduce((total, file) => total + file.size, 0);
   csvSetMessage("", selectedCsv.length
-    ? `<b>${selectedCsv.length} CSV file(s)</b> selected (${fmtSize(totalBytes)}). Run Preview; no Nexus records will be created.`
-    : "Choose one or more CSVs, then run Preview.");
+    ? `<b>${selectedCsv.length} spreadsheet file(s)</b> selected (${fmtSize(totalBytes)}). Run Preview; no Nexus records will be created.`
+    : "Choose one or more CSV/Excel files, then run Preview.");
 });
 $("csvJobType").addEventListener("change", syncCsvImportButton);
 $("csvConfirm").addEventListener("change", syncCsvImportButton);
 
 $("btnCsvPreview").addEventListener("click", async () => {
-  if (!selectedCsv.length) { csvSetMessage("err", "Choose one or more CSV files first."); return; }
+  if (!selectedCsv.length) { csvSetMessage("err", "Choose one or more CSV/Excel files first."); return; }
   $("btnCsvPreview").disabled = true;
-  csvSetMessage("", "Reading and validating the complete CSV…");
-  const fd = new FormData();
-  selectedCsv.forEach(file => fd.append("file", file, file.name));
   try {
+    if (!csvInspection) {
+      csvSetMessage("", "Reading headers and detecting candidate columns…");
+      const inspection = await inspectCsvFiles();
+      if (!inspection.canAutoMap) {
+        csvSetMessage("err", "Some required columns could not be mapped confidently. Choose them in Column mapping, then click Analyze and preview again.");
+        syncCsvImportButton();
+        return;
+      }
+    }
+    csvSetMessage("", "Validating every mapped row…");
+    const fd = new FormData();
+    selectedCsv.forEach(file => fd.append("file", file, file.name));
+    fd.append("column_mapping", JSON.stringify(collectCsvMappings()));
     const response = await fetch("/api/csv/preview", { method: "POST", body: fd });
     const data = await response.json();
-    if (!data.ok) throw new Error(data.error || "CSV preview failed");
+    if (!data.ok) throw new Error(data.error || "Spreadsheet preview failed");
     csvPreview = data;
     const s = data.summary;
     const reasons = Object.entries(s.rejectedByReason || {})
@@ -853,8 +963,8 @@ $("btnCsvPreview").addEventListener("click", async () => {
     const professions = Object.entries(s.safeByProfession || {})
       .map(([profession, count]) => `${count} ${esc(profession)}`).join(", ");
     csvSetMessage("ok", `<b>${s.safeRows} safe rows</b> will be eligible for import from ${s.totalRows} total. ` +
-      `Detected ${esc(s.schemaLabel || "supported CSV")} across ${s.fileCount || 1} file(s) ` +
-      `(threshold ${s.minimumLikelihood}+${states ? "; " + states : ""}). ` +
+      `Detected ${esc(s.schemaLabel || "mapped spreadsheet")} across ${s.fileCount || 1} file(s) ` +
+      `(${esc(s.likelihoodPolicy || ("threshold " + s.minimumLikelihood + "+"))}${states ? "; " + states : ""}). ` +
       `${professions ? "Professions: " + professions + ". " : ""}` +
       `${s.rejectedRows} excluded${reasons ? ": " + reasons : ""}.`);
     const tbody = $("csvPreviewTable").querySelector("tbody");
@@ -927,6 +1037,7 @@ $("btnCsvImport").addEventListener("click", async () => {
   selectedCsv.forEach(file => fd.append("file", file, file.name));
   fd.append("job_type", $("csvJobType").value);
   fd.append("confirmed", "true");
+  fd.append("column_mapping", JSON.stringify(collectCsvMappings()));
   try {
     const response = await fetch("/api/csv/import", { method: "POST", body: fd });
     const data = await response.json();
