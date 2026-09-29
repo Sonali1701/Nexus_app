@@ -147,7 +147,7 @@
   <!-- ============ TAB: NEW CANDIDATES ============ -->
   <section class="card" id="tab-new">
     <h2>Create candidates with resumes</h2>
-    <p class="hint">Each resume creates a new candidate via the <b>Webhook Profile Data</b> API and is queued for the Nexus Resume Parser. Name, email and phone are <b>extracted automatically from each resume</b> when you drop it &mdash; just review the highlighted gaps and hit upload. <span id="extractHint"></span></p>
+    <p class="hint">Each resume creates a new candidate via the <b>Webhook Profile Data</b> API and is queued for the Nexus Resume Parser. Name and contact details are <b>extracted automatically from each resume</b> when you drop it. A first name, last name, and either email or phone are required. <span id="extractHint"></span></p>
 
     <details class="defaults" id="defaultsPanel" open>
       <summary id="defaultsSummary">Candidate details for this batch</summary>
@@ -156,6 +156,8 @@
       <div class="grid" id="selectorLive" style="margin-top:12px">
         <div class="field"><label>Profession <span class="req">*</span></label>
           <select id="sel_profession"><option value="">Loading…</option></select></div>
+        <div class="field"><label>Offering <span class="req" id="offeringRequired" style="display:none">*</span></label>
+          <select id="sel_offering" disabled><option value="">Select a profession first</option></select></div>
         <div class="field"><label>Specialty <span class="req">*</span></label>
           <select id="sel_specialty" disabled><option value="">Select a profession first</option></select></div>
         <div class="field"><label>State <span class="req">*</span></label>
@@ -386,8 +388,8 @@ $("btnActivity").addEventListener("click", async () => {
   }
 });
 
-/* ---- master data: populate Profession / Specialty / State dropdowns ---- */
-let allSpecialties = [], allStates = [];
+/* ---- Nexus master data and supported taxonomy from the supplied sheet ---- */
+let allTaxonomy = [], allStates = [];
 
 function opt(value, label) {
   const o = document.createElement("option");
@@ -395,19 +397,42 @@ function opt(value, label) {
   return o;
 }
 
-function populateSpecialties(professionId, keepSelection) {
-  const sel = $("sel_specialty");
+function populateOfferings(professionId, keepSelection) {
+  const sel = $("sel_offering");
   const prev = keepSelection ? sel.value : "";
+  const names = [...new Set(allTaxonomy
+    .filter(t => String(t.professionId) === String(professionId))
+    .map(t => t.offeringName).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
   sel.innerHTML = "";
-  if (!professionId) {
-    sel.appendChild(opt("", "Select a profession first"));
+  $("offeringRequired").style.display = names.length > 1 ? "inline" : "none";
+  if (!professionId || !names.length) {
+    sel.appendChild(opt("", professionId ? "No supported offering" : "Select a profession first"));
     sel.disabled = true;
     return;
   }
-  // Nexus requires the specialty to belong to the chosen profession.
-  const matches = allSpecialties.filter(s => String(s.professionId) === String(professionId));
-  const list = matches.length ? matches : allSpecialties;
-  sel.appendChild(opt("", matches.length ? "Select a specialty…" : "Select a specialty… (all)"));
+  sel.appendChild(opt("", names.length > 1 ? "Select an offering…" : names[0]));
+  names.forEach(name => sel.appendChild(opt(name, name)));
+  if (names.length === 1) sel.value = names[0];
+  else if (prev && names.includes(prev)) sel.value = prev;
+  sel.disabled = false;
+}
+
+function populateSpecialties(professionId, offeringName, keepSelection) {
+  const sel = $("sel_specialty");
+  const prev = keepSelection ? sel.value : "";
+  sel.innerHTML = "";
+  if (!professionId || !offeringName) {
+    sel.appendChild(opt("", professionId ? "Select an offering first" : "Select a profession first"));
+    sel.disabled = true;
+    return;
+  }
+  const list = [...new Map(allTaxonomy
+    .filter(t => String(t.professionId) === String(professionId) &&
+                 t.offeringName === offeringName)
+    .map(t => [String(t.specialtyId), { id: t.specialtyId, name: t.specialtyName }]))
+    .values()].sort((a, b) => a.name.localeCompare(b.name));
+  sel.appendChild(opt("", "Select a specialty…"));
   list.forEach(s => sel.appendChild(opt(s.id, s.name)));
   sel.disabled = false;
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
@@ -434,9 +459,16 @@ async function loadMaster() {
   }
 
   const profSel = $("sel_profession"), stateSel = $("sel_state");
+  allTaxonomy = j.taxonomy || [];
+  if (!allTaxonomy.length) {
+    const note = $("selectorNote");
+    note.style.display = "block";
+    note.textContent = j.taxonomyError || "The Nexus support sheet has no usable profession/offering/specialty combinations.";
+  }
   profSel.innerHTML = ""; profSel.appendChild(opt("", "Select a profession…"));
-  (j.professions || []).forEach(p => profSel.appendChild(opt(p.id, p.name)));
-  allSpecialties = j.specialties || [];
+  const supportedProfessionIds = new Set(allTaxonomy.map(t => String(t.professionId)));
+  (j.professions || []).filter(p => supportedProfessionIds.has(String(p.id)))
+    .forEach(p => profSel.appendChild(opt(p.id, p.name)));
   allStates = j.states || [];
   stateSel.innerHTML = ""; stateSel.appendChild(opt("", "(none)"));
   allStates.forEach(s => stateSel.appendChild(opt(s.id, s.code ? `${s.name} (${s.code})` : s.name)));
@@ -444,7 +476,10 @@ async function loadMaster() {
   // restore last-used selections
   const savedProf = localStorage.getItem("nexus_sel_profession") || "";
   if ([...profSel.options].some(o => o.value === savedProf)) profSel.value = savedProf;
-  populateSpecialties(profSel.value, false);
+  populateOfferings(profSel.value, false);
+  const savedOffering = localStorage.getItem("nexus_sel_offering") || "";
+  if ([...$("sel_offering").options].some(o => o.value === savedOffering)) $("sel_offering").value = savedOffering;
+  populateSpecialties(profSel.value, $("sel_offering").value, false);
   const savedSpec = localStorage.getItem("nexus_sel_specialty") || "";
   if ([...$("sel_specialty").options].some(o => o.value === savedSpec)) $("sel_specialty").value = savedSpec;
   const savedState = localStorage.getItem("nexus_sel_state") || "";
@@ -452,8 +487,15 @@ async function loadMaster() {
 
   profSel.addEventListener("change", () => {
     localStorage.setItem("nexus_sel_profession", profSel.value);
+    localStorage.removeItem("nexus_sel_offering");
     localStorage.removeItem("nexus_sel_specialty");
-    populateSpecialties(profSel.value, false);
+    populateOfferings(profSel.value, false);
+    populateSpecialties(profSel.value, $("sel_offering").value, false);
+  });
+  $("sel_offering").addEventListener("change", () => {
+    localStorage.setItem("nexus_sel_offering", $("sel_offering").value);
+    localStorage.removeItem("nexus_sel_specialty");
+    populateSpecialties(profSel.value, $("sel_offering").value, false);
   });
   $("sel_specialty").addEventListener("change", () =>
     localStorage.setItem("nexus_sel_specialty", $("sel_specialty").value));
@@ -576,8 +618,14 @@ function applyExtraction(row, res) {
   set(".r-email", res.email);
   set(".r-phone", res.phone);
 
-  const missing = ["r-first","r-last","r-email","r-phone"]
+  const missing = ["r-first","r-last"]
     .filter(c => row.el.querySelector("." + c).value.trim() === "");
+  const emailInput = row.el.querySelector(".r-email");
+  const phoneInput = row.el.querySelector(".r-phone");
+  const hasContact = emailInput.value.trim() || phoneInput.value.trim();
+  emailInput.classList.toggle("miss", !hasContact);
+  phoneInput.classList.toggle("miss", !hasContact);
+  if (!hasContact) missing.push("email or phone");
   const srcLabel = { "heuristic": "auto-extracted", "heuristic+claude": "auto-extracted (AI-assisted)",
                      "claude": "AI-extracted (scanned PDF)" }[res.source] || res.source;
   if (missing.length) {
@@ -626,6 +674,10 @@ function sharedDefaults() {
     if (p !== null) d.professionId = p;
     if (s !== null) d.specialtyId = s;
     if (st !== null) d.stateId = st;
+    d.offeringName = $("sel_offering").value || "";
+    const taxonomy = allTaxonomy.find(t => String(t.professionId) === String(p) &&
+      t.offeringName === d.offeringName && String(t.specialtyId) === String(s));
+    if (taxonomy) d.subOfferingName = taxonomy.subOfferingName || "";
   }
   // advanced (optional) numeric overrides
   for (const [k, id] of Object.entries({ referralSourceId: "d_referralSourceId",
@@ -646,7 +698,16 @@ function sharedDefaults() {
 function selectionError() {
   const d = sharedDefaults();
   if (!d.jobId && !d.professionId) return "Pick a profession" + (usingManual() ? " ID" : "") + " for this batch.";
+  if (!d.jobId && !usingManual()) {
+    const offerings = [...new Set(allTaxonomy.filter(t => String(t.professionId) === String(d.professionId))
+      .map(t => t.offeringName).filter(Boolean))];
+    if (offerings.length > 1 && !d.offeringName) return "Pick an offering for this profession.";
+  }
   if (!d.jobId && !d.specialtyId) return "Pick a specialty" + (usingManual() ? " ID" : "") + " for this batch.";
+  if (!d.jobId && !usingManual() && !allTaxonomy.some(t =>
+      String(t.professionId) === String(d.professionId) &&
+      t.offeringName === d.offeringName && String(t.specialtyId) === String(d.specialtyId)))
+    return "Choose a supported profession, offering, and specialty combination from the sheet.";
   if (!d.stateId) return "Pick a state for this batch. Nexus requires it when creating a candidate.";
   if (!d.jobTypeIds || !d.jobTypeIds.length) return "Pick at least one job type for this batch.";
   return null;
@@ -689,8 +750,8 @@ $("btnUploadNew").addEventListener("click", async () => {
     const email = r.el.querySelector(".r-email").value.trim();
     const phone = r.el.querySelector(".r-phone").value.trim();
     const rowErrors = [];
-    if (!first || !last || !email || !phone) {
-      rowErrors.push("First name, last name, email and phone are required");
+    if (!first || !last || (!email && !phone)) {
+      rowErrors.push("First name and last name are required, plus an email or phone number");
     }
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) rowErrors.push("Email format is invalid");
     const phoneDigits = phone.replace(/\D/g, "");

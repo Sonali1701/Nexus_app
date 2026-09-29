@@ -295,6 +295,14 @@ def _prepare_candidate_profile(profile):
     if email:
         profile["email"] = email
         profile["primaryEmail"] = email
+    else:
+        profile.pop("email", None)
+        profile.pop("primaryEmail", None)
+    phone = str(profile.get("phone") or "").strip()
+    if phone:
+        profile["phone"] = phone
+    else:
+        profile.pop("phone", None)
 
     profession_id = profile.get("professionId")
     profession_ids = profile.get("professionIds")
@@ -341,16 +349,15 @@ def _prepare_candidate_profile(profile):
             profile["referralSourceId"] = int(_row_id(sources[0]))
 
     errors = []
-    for key, label in (("firstName", "first name"), ("lastName", "last name"),
-                       ("phone", "phone")):
+    for key, label in (("firstName", "first name"), ("lastName", "last name")):
         if not str(profile.get(key) or "").strip():
             errors.append(f"{label} is required")
-    if not email:
-        errors.append("email is required")
-    elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+    if not email and not phone:
+        errors.append("email or phone is required")
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         errors.append("email format is invalid")
-    phone_digits = re.sub(r"\D", "", str(profile.get("phone") or ""))
-    if phone_digits and not 10 <= len(phone_digits) <= 15:
+    phone_digits = re.sub(r"\D", "", phone)
+    if phone and not 10 <= len(phone_digits) <= 15:
         errors.append("phone must contain 10 to 15 digits")
 
     if not profile.get("jobId"):
@@ -629,7 +636,73 @@ def master():
          for s in _active(states) if s.get("id")),
         key=lambda x: (x["name"] or "").lower(),
     )
-    return {"ok": True, "professions": prof, "specialties": spec, "states": st}
+
+    # The support sheet's populated Old* columns define valid combinations.
+    # Resolve its labels to the IDs from this agency's live Nexus masters.
+    taxonomy = []
+    taxonomy_error = None
+    try:
+        with config.NEXUS_TAXONOMY_CSV.open(
+            "r", encoding="utf-8-sig", newline=""
+        ) as sheet:
+            reader = csv.DictReader(sheet)
+            required = {"Old Profession", "Old Offering", "Old Specialty"}
+            if not reader.fieldnames or not required.issubset(reader.fieldnames):
+                raise ValueError("The support sheet is missing required Old* columns")
+
+            profession_by_name = {
+                str(row.get("name", "")).strip().casefold(): row
+                for row in _active(professions)
+                if row.get("id") and row.get("name")
+            }
+            specialty_by_profession_and_name = {
+                (str(row.get("professionId", "")).strip(),
+                 str(row.get("name", "")).strip().casefold()): row
+                for row in _active(specialties)
+                if row.get("name")
+            }
+            seen = set()
+            for source in reader:
+                profession_name = str(source.get("Old Profession") or "").strip()
+                offering_name = str(source.get("Old Offering") or "").strip()
+                sub_offering_name = str(source.get("Old Sub Offering") or "").strip()
+                specialty_name = str(source.get("Old Specialty") or "").strip()
+                profession = profession_by_name.get(profession_name.casefold())
+                if not profession or not offering_name or not specialty_name:
+                    continue
+                profession_id = str(profession["id"])
+                specialty = specialty_by_profession_and_name.get(
+                    (profession_id, specialty_name.casefold())
+                )
+                if not specialty:
+                    continue
+                specialty_id = specialty.get("specialtyId", specialty.get("id"))
+                if specialty_id is None:
+                    continue
+                key = (profession_id, offering_name.casefold(),
+                       sub_offering_name.casefold(), str(specialty_id))
+                if key in seen:
+                    continue
+                seen.add(key)
+                taxonomy.append({
+                    "professionId": int(profession_id),
+                    "professionName": str(profession.get("name", "")).strip(),
+                    "offeringName": offering_name,
+                    "subOfferingName": sub_offering_name,
+                    "specialtyId": int(specialty_id),
+                    "specialtyName": str(specialty.get("name", "")).strip(),
+                })
+        if not taxonomy:
+            taxonomy_error = (
+                "No support-sheet combinations matched the active Nexus profession and specialty lists."
+            )
+    except (OSError, csv.Error, ValueError) as e:
+        taxonomy_error = f"Could not load the Nexus support sheet: {e}"
+
+    return {
+        "ok": True, "professions": prof, "specialties": spec, "states": st,
+        "taxonomy": taxonomy, "taxonomyError": taxonomy_error,
+    }
 
 
 @app.get("/api/document-types")

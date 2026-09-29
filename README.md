@@ -179,7 +179,7 @@ you need and paste them into `.env`. (Underlying endpoints:
 ## Notes on the webhook fields
 
 For the *New candidates* mode, the webhook requires `firstName`, `lastName`,
-`email`, `phone` (auto-extracted from the resume), `stateId`, `jobTypeIds`, and
+either `email` or `phone` (auto-extracted from the resume), `stateId`, `jobTypeIds`, and
 either a `jobId` **or** `professionId` + `specialtyId`. Before upload, the server
 also supplies Nexus's canonical Candidate API aliases (`primaryEmail`,
 `professionIds`, `specialtyIds`, and `primarySpecialtyId`) and resolves the
@@ -190,9 +190,16 @@ live master data when they are not configured explicitly.
 calls `GET /api/master` (cached) which proxies Nexus's `master/professions`,
 `master/specialties`, and `master/states`, so users pick from real names
 instead of typing ID numbers. The Specialty list cascades from the chosen
-Profession (Nexus requires the specialty to belong to it). Selections are
+Profession and Offering (the sheet defines valid combinations). Selections are
 remembered per browser. If master data can't be loaded (e.g. not connected),
 the UI falls back to manual numeric ID entry.
+
+The app also reads the populated `Old Profession`, `Old Offering`, `Old Sub Offering`,
+and `Old Specialty` columns from `Adhoc-automation-data (5).csv`. It resolves
+profession and specialty labels to IDs from Nexus's live master lists, filters
+specialties by the supported offering, and requires an offering when a
+profession has multiple offerings. The sheet is searched beside the app and in
+Downloads by default. Set `NEXUS_TAXONOMY_CSV` in `.env` to use another path.
 
 Agency-wide constants still come from `.env` and are merged server-side so
 users never see them:

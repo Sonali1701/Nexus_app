@@ -51,6 +51,23 @@ NEXUS_TOKEN_BASIC = os.getenv("NEXUS_TOKEN_BASIC", "bmV4dXM6NXM6Nn5EcEhaelcmVFoj
 # it via GET /master/documenttypes.
 NEXUS_RESUME_DOC_TYPE_ID = os.getenv("NEXUS_RESUME_DOC_TYPE_ID", "").strip()
 
+# Nexus's supported profession/offering/specialty combinations. The source
+# sheet can sit beside the app or in the user's Downloads folder; deployments
+# can point NEXUS_TAXONOMY_CSV at their own copy.
+_taxonomy_name = "Adhoc-automation-data (5).csv"
+_taxonomy_override = os.getenv("NEXUS_TAXONOMY_CSV", "").strip()
+if _taxonomy_override:
+    NEXUS_TAXONOMY_CSV = Path(_taxonomy_override).expanduser()
+else:
+    _taxonomy_candidates = (
+        BASE_DIR / _taxonomy_name,
+        Path.home() / "Downloads" / _taxonomy_name,
+    )
+    NEXUS_TAXONOMY_CSV = next(
+        (path for path in _taxonomy_candidates if path.is_file()),
+        _taxonomy_candidates[0],
+    )
+
 # --- Admin-set candidate defaults -----------------------------------------
 # JSON merged into every webhook profileData so end users don't have to know
 # Nexus master-data IDs. Example:
