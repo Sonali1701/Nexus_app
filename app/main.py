@@ -301,8 +301,16 @@ def _prepare_candidate_profile(profile):
     phone = str(profile.get("phone") or "").strip()
     if phone:
         profile["phone"] = phone
+        # Nexus treats Cell Phone as the primary number when it is present.
+        profile["cellPhone"] = str(profile.get("cellPhone") or phone).strip()
     else:
         profile.pop("phone", None)
+        profile.pop("cellPhone", None)
+
+    # These labels only constrain the UI selection. Nexus candidate APIs use
+    # the resolved profession/specialty IDs and do not accept taxonomy labels.
+    profile.pop("offeringName", None)
+    profile.pop("subOfferingName", None)
 
     profession_id = profile.get("professionId")
     profession_ids = profile.get("professionIds")
@@ -910,23 +918,78 @@ async def upload_new_candidate(
             content={"ok": False, "error": f"{file.filename} is over the 10 MB Nexus limit"},
         )
 
+    content_type = file.content_type or "application/octet-stream"
+    phone_only = bool(profile.get("phone") and not profile.get("primaryEmail"))
     try:
-        resp = client.create_candidate_with_resume(
-            profile, file.filename, content,
-            file.content_type or "application/octet-stream",
-        )
+        if phone_only:
+            # Nexus's resume webhook rejects a missing email even though its
+            # documented Candidate API permits phone-only candidate records.
+            candidate_profile = dict(profile)
+            candidate_profile.pop("professionId", None)
+            candidate_profile.pop("specialtyId", None)
+            resp = client.create_candidate(candidate_profile)
+            try:
+                body = resp.json()
+            except ValueError:
+                body = resp.text[:2000]
+            candidate_id = (
+                body.get("id", body.get("Id")) if isinstance(body, dict) else None
+            )
+            if not candidate_id:
+                raise NexusError(
+                    "Nexus created no candidate ID for the phone-only profile",
+                    status_code=resp.status_code,
+                    body=body,
+                )
+            doc_type_id = client.resolve_resume_doc_type_id()
+            notes = (
+                f"Uploaded by {uploader} via Bulk Parser"
+                if uploader and config.UPLOADER_ATTRIBUTION else ""
+            )
+            doc_resp = client.upload_documents(candidate_id, [{
+                "doc_type_id": doc_type_id,
+                "filename": file.filename,
+                "content": content,
+                "content_type": content_type,
+                "notes": notes,
+            }])
+            if doc_resp.status_code >= 400:
+                try:
+                    doc_body = doc_resp.json()
+                except ValueError:
+                    doc_body = doc_resp.text[:2000]
+                audit.record(
+                    uploader, "create_candidate", False,
+                    filename=file.filename, candidateId=candidate_id,
+                    detail=f"Candidate created; resume upload failed: {doc_body}",
+                )
+                return JSONResponse(status_code=doc_resp.status_code, content={
+                    "ok": False,
+                    "candidateCreated": True,
+                    "candidateId": candidate_id,
+                    "nexusStatus": doc_resp.status_code,
+                    "nexusBody": doc_body,
+                    "error": (
+                        f"Candidate {candidate_id} was created, but the resume "
+                        "upload failed. Upload it from the Existing Candidate tab."
+                    ),
+                })
+        else:
+            resp = client.create_candidate_with_resume(
+                profile, file.filename, content, content_type,
+            )
     except NexusError as e:
         audit.record(uploader, "create_candidate", False,
                      filename=file.filename, detail=str(e))
         return _nexus_error_response(e)
 
-    try:
-        body = resp.json()
-    except ValueError:
-        body = resp.text[:2000]
-
+    if not phone_only:
+        try:
+            body = resp.json()
+        except ValueError:
+            body = resp.text[:2000]
+        candidate_id = body.get("id", body.get("Id")) if isinstance(body, dict) else None
     ok = resp.status_code < 400
-    candidate_id = body.get("id", body.get("Id")) if isinstance(body, dict) else None
 
     # Best-effort: stamp who uploaded into a Nexus-visible candidate note.
     # Never let this break the successful create — it's supplementary to the

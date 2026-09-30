@@ -186,6 +186,11 @@ also supplies Nexus's canonical Candidate API aliases (`primaryEmail`,
 agency's Prospect `statusId`, USA `countryId`, and sole referral source from
 live master data when they are not configured explicitly.
 
+When only a phone number is available, the app creates the candidate through
+the Candidate API and then uploads the resume as a Candidate Resume document.
+This avoids the resume webhook's email requirement while keeping the document
+in the Nexus parser queue.
+
 **Profession, Specialty and State are chosen from live dropdowns** — the app
 calls `GET /api/master` (cached) which proxies Nexus's `master/professions`,
 `master/specialties`, and `master/states`, so users pick from real names

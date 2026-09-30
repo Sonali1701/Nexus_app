@@ -759,7 +759,7 @@ $("btnUploadNew").addEventListener("click", async () => {
     if (rowErrors.length) setStatus(r, "err", "Invalid fields", rowErrors.join("; "));
     else ready.push(r);
   }
-  if (!ready.length) { showBanner("err", "Fill first name, last name, email and phone for each resume."); return; }
+  if (!ready.length) { showBanner("err", "Fill first name, last name, and either email or phone for each resume."); return; }
 
   $("btnUploadNew").disabled = true;
   banner.className = "banner";
