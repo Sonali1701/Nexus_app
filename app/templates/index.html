@@ -66,7 +66,7 @@
   .status.queued { color: var(--muted); }
   .status.uploading { color: var(--warn); }
   .status.ok { color: var(--ok); }
-  .status.err { color: var(--err); cursor: help; }
+  .status.err { color: var(--err); white-space: normal; overflow-wrap: anywhere; }
   .status.extracting { color: #7c3aed; }
   td input.miss { border-color: #fca5a5; background: #fef2f2; }
   .exbadge { font-size: 10.5px; color: var(--muted); display: block; margin-top: 2px; }
@@ -185,7 +185,6 @@
         <div class="grid" style="margin-top:10px">
           <div class="field"><label>Division ID</label><input type="number" id="d_divisionId"></div>
           <div class="field"><label>Job ID</label><input type="number" id="d_jobId" placeholder="skips profession/specialty"></div>
-          <div class="field"><label>Referral Source ID</label><input type="number" id="d_referralSourceId" placeholder="admin default"></div>
         </div>
         <div class="field" style="margin-top:10px">
           <label>Extra profileData JSON (merged into every candidate)</label>
@@ -305,12 +304,21 @@ function showBanner(cls, html) { banner.className = "banner " + cls; banner.inne
 function fmtSize(b) { return b > 1024*1024 ? (b/1048576).toFixed(2) + " MB" : Math.ceil(b/1024) + " KB"; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
 function apiErrorText(j) {
-  const body = j && (j.nexusBody != null ? j.nexusBody : j.error);
-  if (typeof body === "string") return body || "Unknown Nexus error";
-  if (!body) return "Unknown Nexus error";
-  const parts = [body.errorCode, body.message, body.detail, body.title, body.error]
-    .filter((v, i, a) => v && a.indexOf(v) === i);
-  return parts.length ? parts.join(": ") : JSON.stringify(body);
+  let body = j && (j.nexusBody != null ? j.nexusBody : j.error);
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); }
+    catch { return body || "Unknown Nexus error"; }
+  }
+  if (!body) return (j && j.error) || "Unknown Nexus error";
+  if (typeof body !== "object") return String(body);
+  const code = String(body.errorCode || "").trim();
+  const message = String(body.errorMessage || body.message || body.detail ||
+    body.title || body.error || "").trim();
+  if (code === "referral.source.not.attached.to.user") {
+    return `Referral source is not assigned to the Nexus API user. ${message} (${code})`;
+  }
+  if (message) return code ? `${message} (${code})` : message;
+  return code || (j && j.error) || JSON.stringify(body);
 }
 
 /* ---- tabs ---- */
@@ -346,8 +354,6 @@ fetch("/api/status").then(r => r.json()).then(s => {
       : "AI-assisted extraction is <b>off</b> (no Anthropic credentials) &mdash; using built-in heuristics only.";
   }
   serverDefaults = s.profileDefaults || {};
-  if (serverDefaults.referralSourceId != null)
-    $("d_referralSourceId").placeholder = serverDefaults.referralSourceId + " (admin default)";
   const u = s.user || {};
   $("userChip").textContent = u.name ? ("Signed in as " + u.name) : "";
   if (u.is_admin) $("adminLink").classList.remove("hidden");
@@ -680,8 +686,7 @@ function sharedDefaults() {
     if (taxonomy) d.subOfferingName = taxonomy.subOfferingName || "";
   }
   // advanced (optional) numeric overrides
-  for (const [k, id] of Object.entries({ referralSourceId: "d_referralSourceId",
-                                         divisionId: "d_divisionId", jobId: "d_jobId" })) {
+  for (const [k, id] of Object.entries({ divisionId: "d_divisionId", jobId: "d_jobId" })) {
     const v = num($(id).value); if (v !== null) d[k] = v;
   }
   const jts = [...document.querySelectorAll(".jt:checked")].map(c => c.value);
@@ -714,7 +719,7 @@ function selectionError() {
 }
 
 // persist advanced numeric fields (dropdowns persist themselves in loadMaster)
-["d_referralSourceId","d_divisionId","d_jobId","d_extra"].forEach(id => {
+["d_divisionId","d_jobId","d_extra"].forEach(id => {
   const el = $(id);
   el.value = localStorage.getItem("nexus_" + id) || "";
   el.addEventListener("change", () => localStorage.setItem("nexus_" + id, el.value));
@@ -783,7 +788,7 @@ $("btnUploadNew").addEventListener("click", async () => {
         setStatus(r, "ok", id ? "✓ id " + id : "✓ Created");
       } else {
         const detail = apiErrorText(j);
-        setStatus(r, "err", "✗ " + (j.nexusStatus || "failed"), detail);
+        setStatus(r, "err", detail, detail);
       }
     } catch (e) {
       setStatus(r, "err", "✗ network", e.message);

@@ -1,4 +1,3 @@
-import io
 import csv
 import io
 import asyncio
@@ -165,6 +164,29 @@ class FlexibleSpreadsheetImportTests(unittest.TestCase):
             create.assert_called_once()
             upload.assert_called_once()
             webhook.assert_not_called()
+
+    def test_resume_upload_uses_configured_referral_source_for_every_user(self):
+        from app import main
+
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"id": 123}
+        profile = {
+            "firstName": "Jane", "lastName": "Doe",
+            "primaryEmail": "jane@example.com", "phone": "(502) 555-1212",
+            "referralSourceId": 9999,
+        }
+        with patch.object(main.config, "NEXUS_DEFAULT_PROFILE", {"referralSourceId": 5638}), \
+                patch.object(main, "_current_user_name", return_value="Lucky"), \
+                patch.object(main, "_prepare_candidate_profile", side_effect=lambda value: value), \
+                patch.object(main.client, "create_candidate_with_resume", return_value=response) as webhook, \
+                patch.object(main.client, "patch_candidate", return_value=response), \
+                patch.object(main.audit, "record"):
+            file = UploadFile(file=io.BytesIO(b"%PDF-1.4 test"), filename="resume.pdf")
+            result = asyncio.run(main.upload_new_candidate(
+                None, json.dumps(profile), file,
+            ))
+        self.assertTrue(result["ok"])
+        self.assertEqual(webhook.call_args.args[0]["referralSourceId"], 5638)
 
     def test_auto_maps_custom_csv_and_applies_threshold(self):
         content = (

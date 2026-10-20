@@ -905,7 +905,14 @@ async def upload_new_candidate(
     # canonical Candidate API aliases/required defaults used by Nexus's
     # candidate-profile validator.
     try:
-        profile = _prepare_candidate_profile({**config.NEXUS_DEFAULT_PROFILE, **profile})
+        profile = {**config.NEXUS_DEFAULT_PROFILE, **profile}
+        # Referral sources are assigned to the Nexus API user, not the app's
+        # signed-in user. A browser-supplied ID can therefore fail the webhook
+        # even when the administrator's configured source is valid.
+        configured_referral = config.NEXUS_DEFAULT_PROFILE.get("referralSourceId")
+        if configured_referral:
+            profile["referralSourceId"] = configured_referral
+        profile = _prepare_candidate_profile(profile)
     except NexusError as e:
         return _nexus_error_response(e)
     except (TypeError, ValueError, IndexError) as e:
