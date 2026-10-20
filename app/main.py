@@ -564,8 +564,11 @@ def _run_csv_import(job_id, records, defaults, uploader=""):
         try:
             # Search independently so a record with a changed email but the
             # same phone (or vice versa) is still treated as an existing candidate.
-            matches = client.search_candidates(email=record["email"])
-            if not matches:
+            matches = (
+                client.search_candidates(email=record["email"])
+                if record.get("email") else []
+            )
+            if not matches and record.get("phone"):
                 matches = client.search_candidates(phone=record["phone"])
             if matches:
                 match = matches[0]
@@ -919,11 +922,11 @@ async def upload_new_candidate(
         )
 
     content_type = file.content_type or "application/octet-stream"
-    phone_only = bool(profile.get("phone") and not profile.get("primaryEmail"))
+    single_contact = bool(profile.get("phone")) != bool(profile.get("primaryEmail"))
     try:
-        if phone_only:
-            # Nexus's resume webhook rejects a missing email even though its
-            # documented Candidate API permits phone-only candidate records.
+        if single_contact:
+            # The resume webhook can reject a profile with only one contact
+            # field. Create through the Candidate API, then attach the resume.
             candidate_profile = dict(profile)
             candidate_profile.pop("professionId", None)
             candidate_profile.pop("specialtyId", None)
@@ -937,7 +940,7 @@ async def upload_new_candidate(
             )
             if not candidate_id:
                 raise NexusError(
-                    "Nexus created no candidate ID for the phone-only profile",
+                    "Nexus created no candidate ID for the single-contact profile",
                     status_code=resp.status_code,
                     body=body,
                 )
@@ -983,7 +986,7 @@ async def upload_new_candidate(
                      filename=file.filename, detail=str(e))
         return _nexus_error_response(e)
 
-    if not phone_only:
+    if not single_contact:
         try:
             body = resp.json()
         except ValueError:

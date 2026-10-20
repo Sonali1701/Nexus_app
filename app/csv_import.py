@@ -224,21 +224,23 @@ def _structured_emails(row):
 
 def _best_email(row):
     """Prefer every available personal-email source before a work address."""
-    recommended = _text(row.get("recommended_personal_email")).lower()
+    recommended = _first_valid_email(row.get("recommended_personal_email"))
     if recommended:
         return recommended
     for item in _list(row.get("personal_emails")):
-        if isinstance(item, str) and _text(item):
-            return _text(item).lower()
+        if isinstance(item, str) and (email := _first_valid_email(item)):
+            return email
     structured = _structured_emails(row)
     for item in structured:
-        if _text(item.get("type")).lower() == "personal":
-            return _text(item["address"]).lower()
-    work = _text(row.get("work_email")).lower()
+        if _text(item.get("type")).lower() == "personal" and (
+                email := _first_valid_email(item.get("address"))):
+            return email
+    work = _first_valid_email(row.get("work_email"))
     if work:
         return work
-    if structured:
-        return _text(structured[0]["address"]).lower()
+    for item in structured:
+        if email := _first_valid_email(item.get("address")):
+            return email
     return ""
 
 
@@ -256,14 +258,16 @@ def _email_type(email):
 
 
 def _best_indeed_email(row):
-    personal = _first_value(row, (
-        "Personal Email", "Personal email", "personal_email",
-        "recommended_personal_email", "PDL personal email",
-    )).lower()
+    personal = _first_valid_email(*(
+        row.get(key) for key in (
+            "Personal Email", "Personal email", "personal_email",
+            "recommended_personal_email", "PDL personal email",
+        )
+    ))
     if personal:
         return personal, "personal"
-    email = _text(row.get("Email")).lower()
-    return email, _email_type(email)
+    email = _first_valid_email(row.get("Email"))
+    return email, _email_type(email) if email else ""
 
 
 def _phone(value):
@@ -278,12 +282,13 @@ def _phone(value):
 
 
 def _best_indeed_phone(row):
-    mobile = _first_value(row, (
+    mobile = _phone(_first_value(row, (
         "Mobile Phone", "Mobile phone", "mobile_phone", "PDL mobile phone",
-    ))
+    )))
     if mobile:
-        return _phone(mobile), "mobile"
-    return _phone(row.get("Phone")), "provided fallback"
+        return mobile, "mobile"
+    phone = _phone(row.get("Phone"))
+    return phone, "provided fallback" if phone else ""
 
 
 def _name_case(value):
@@ -544,10 +549,9 @@ def _mapping_issues(headers, mapping):
     if not mapping.get("fullName") and not (
             mapping.get("firstName") and mapping.get("lastName")):
         issues.append("map Full name, or both First name and Last name")
-    if not (mapping.get("personalEmail") or mapping.get("email")):
-        issues.append("map a Personal email or Email column")
-    if not (mapping.get("mobilePhone") or mapping.get("phone")):
-        issues.append("map a Mobile phone or Phone column")
+    if not any(mapping.get(field) for field in (
+            "personalEmail", "email", "mobilePhone", "phone")):
+        issues.append("map an Email or Phone column")
     if not (mapping.get("location") or mapping.get("state")):
         issues.append("map a Combined city/state or State column")
     if not (mapping.get("profession") or mapping.get("headline")
@@ -700,18 +704,18 @@ def _parse_generic_table(table, mapping):
 
         personal_raw = _mapped(row, mapping, "personalEmail")
         email = _first_valid_email(personal_raw, _mapped(row, mapping, "email"))
-        if not email:
-            rejected["missing or invalid email"] += 1
-            continue
-        email_type = "personal" if _first_valid_email(personal_raw) == email else _email_type(email)
+        email_type = (
+            "personal" if _first_valid_email(personal_raw) == email
+            else _email_type(email)
+        ) if email else ""
 
         mobile_raw = _mapped(row, mapping, "mobilePhone")
         mobile_phone = _phone(mobile_raw)
         phone = mobile_phone or _phone(_mapped(row, mapping, "phone"))
-        if not phone:
-            rejected["missing or invalid phone"] += 1
+        if not email and not phone:
+            rejected["missing or invalid email and phone"] += 1
             continue
-        phone_source = "mobile" if mobile_phone else "provided fallback"
+        phone_source = ("mobile" if mobile_phone else "provided fallback") if phone else ""
 
         city, state_code = _generic_location(
             _mapped(row, mapping, "location"),
@@ -739,11 +743,13 @@ def _parse_generic_table(table, mapping):
             continue
 
         phone_key = re.sub(r"\D", "", phone)
-        if email in seen_email or phone_key in seen_phone:
+        if (email and email in seen_email) or (phone_key and phone_key in seen_phone):
             rejected["duplicate email or phone inside file"] += 1
             continue
-        seen_email.add(email)
-        seen_phone.add(phone_key)
+        if email:
+            seen_email.add(email)
+        if phone_key:
+            seen_phone.add(phone_key)
 
         linkedin = _text(_mapped(row, mapping, "linkedin"))
         if linkedin and not linkedin.startswith(("http://", "https://")):
@@ -832,11 +838,12 @@ def _parse_indeed_rows(reader):
             continue
         email, email_type = _best_indeed_email(row)
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            rejected["missing or invalid email"] += 1
-            continue
+            email, email_type = "", ""
         phone, phone_source = _best_indeed_phone(row)
         if not phone:
-            rejected["missing or invalid phone"] += 1
+            phone_source = ""
+        if not email and not phone:
+            rejected["missing or invalid email and phone"] += 1
             continue
 
         profession_name, profession_source = _detect_profession(
@@ -846,11 +853,13 @@ def _parse_indeed_rows(reader):
             continue
 
         phone_key = re.sub(r"\D", "", phone)
-        if email in seen_email or phone_key in seen_phone:
+        if (email and email in seen_email) or (phone_key and phone_key in seen_phone):
             rejected["duplicate email or phone inside CSV"] += 1
             continue
-        seen_email.add(email)
-        seen_phone.add(phone_key)
+        if email:
+            seen_email.add(email)
+        if phone_key:
+            seen_phone.add(phone_key)
 
         safe.append({
             "sourceType": "indeed_matches",
@@ -952,11 +961,10 @@ def parse_and_filter(content):
 
         email = _best_email(row)
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            rejected["missing or invalid email"] += 1
-            continue
+            email = ""
         phone = _phone(row.get("mobile_phone"))
-        if not phone:
-            rejected["missing or invalid phone"] += 1
+        if not email and not phone:
+            rejected["missing or invalid email and phone"] += 1
             continue
 
         license_number = _text(row.get("input_preserved_License #"))
@@ -966,11 +974,14 @@ def parse_and_filter(content):
             rejected["incomplete license details"] += 1
             continue
         phone_key = re.sub(r"\D", "", phone)
-        if email in seen_email or phone_key in seen_phone or license_number in seen_license:
+        if ((email and email in seen_email) or (phone_key and phone_key in seen_phone)
+                or license_number in seen_license):
             rejected["duplicate contact or license inside CSV"] += 1
             continue
-        seen_email.add(email)
-        seen_phone.add(phone_key)
+        if email:
+            seen_email.add(email)
+        if phone_key:
+            seen_phone.add(phone_key)
         seen_license.add(license_number)
 
         first_name = _name_case(row.get("first_name"))
@@ -990,9 +1001,9 @@ def parse_and_filter(content):
             "middleName": _name_case(row.get("middle_name")),
             "lastName": last_name,
             "email": email,
-            "emailType": _email_type(email),
+            "emailType": _email_type(email) if email else "",
             "phone": phone,
-            "phoneSource": "mobile",
+            "phoneSource": "mobile" if phone else "",
             "addressLine1": _text(row.get("input_street_address")),
             "city": _name_case(row.get("input_locality")),
             "stateCode": _text(row.get("input_region")).upper(),
@@ -1084,15 +1095,17 @@ def parse_and_filter_many(named_contents, mappings=None):
     seen_license = set()
     cross_file_duplicates = 0
     for original_index, record in ranked:
-        email = record["email"].lower()
-        phone = re.sub(r"\D", "", record["phone"])
+        email = (record.get("email") or "").lower()
+        phone = re.sub(r"\D", "", record.get("phone") or "")
         license_number = _text(record.get("licenseNumber"))
-        if (email in seen_email or phone in seen_phone
+        if ((email and email in seen_email) or (phone and phone in seen_phone)
                 or (license_number and license_number in seen_license)):
             cross_file_duplicates += 1
             continue
-        seen_email.add(email)
-        seen_phone.add(phone)
+        if email:
+            seen_email.add(email)
+        if phone:
+            seen_phone.add(phone)
         if license_number:
             seen_license.add(license_number)
         kept.append((original_index, record))
@@ -1188,8 +1201,8 @@ def candidate_payload(record, defaults):
             f"from {record.get('professionSource') or 'mapped column'}; "
             f"Nexus mapping: {profession_mapping.get('professionName', 'batch default')} / "
             f"{profession_mapping.get('specialtyName', 'batch default')}. "
-            f"Email: {record.get('emailType', 'provided fallback')}; "
-            f"phone: {record.get('phoneSource', 'provided fallback')}."
+            f"Email: {record.get('emailType') or 'not supplied'}; "
+            f"phone: {record.get('phoneSource') or 'not supplied'}."
             f"{license_detail}"
         )
     else:
@@ -1208,16 +1221,13 @@ def candidate_payload(record, defaults):
             f"from {record.get('professionSource') or 'CSV'}; "
             f"Nexus mapping: {profession_mapping.get('professionName', 'batch default')} / "
             f"{profession_mapping.get('specialtyName', 'batch default')}. "
-            f"Email: {record.get('emailType', 'provided fallback')}; "
-            f"phone: {record.get('phoneSource', 'provided fallback')}."
+            f"Email: {record.get('emailType') or 'not supplied'}; "
+            f"phone: {record.get('phoneSource') or 'not supplied'}."
         )
 
     payload = {
         "firstName": record["firstName"],
         "lastName": record["lastName"],
-        "primaryEmail": record["email"],
-        "phone": record["phone"],
-        "cellPhone": record["phone"],
         "statusId": defaults["statusId"],
         "referralSourceId": defaults["referralSourceId"],
         "professionIds": [profession_id],
@@ -1233,6 +1243,11 @@ def candidate_payload(record, defaults):
         "sendMassEmails": False,
         "sendMassSms": False,
     }
+    if record.get("email"):
+        payload["primaryEmail"] = record["email"]
+    if record.get("phone"):
+        payload["phone"] = record["phone"]
+        payload["cellPhone"] = record["phone"]
     if is_license_record:
         payload["licensedStateIds"] = [state_id]
     if record.get("middleName"):
