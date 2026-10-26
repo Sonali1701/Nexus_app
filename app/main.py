@@ -459,12 +459,12 @@ def _csv_candidate_defaults(
 
         for detected_name in requested_professions:
             profession = profession_by_name.get(detected_name.lower())
+            fallback = profession is None
             if not profession:
-                raise NexusError(
-                    f"Could not resolve detected profession {detected_name} from Nexus")
+                profession = unknown_profession
             detected_id = int(_row_id(profession))
             specialty = generic_specialty(detected_id)
-            fallback = specialty is None
+            fallback = fallback or specialty is None
             mapped_profession = unknown_profession if fallback else profession
             mapped_specialty = unknown_specialty if fallback else specialty
             profession_mappings[detected_name] = {

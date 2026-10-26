@@ -22,7 +22,7 @@ INDEED_MIN_LIKELIHOOD = 3
 # Kept for compatibility with callers/tests that refer to the original constant.
 MIN_LIKELIHOOD = LICENSE_MIN_LIKELIHOOD
 MAX_CSV_BYTES = 25 * 1024 * 1024
-MAX_CSV_ROWS = 10_000
+MAX_CSV_ROWS = 50_000
 MAX_CSV_FILES = 100
 MAX_TOTAL_CSV_BYTES = 100 * 1024 * 1024
 SUPPORTED_TABLE_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -141,7 +141,7 @@ MAPPING_FIELDS = (
         "business email", "contact email")),
     ("mobilePhone", "Mobile phone (preferred)", "core", (
         "mobile phone", "mobile phone number", "mobile", "cell phone", "cellphone",
-        "cell phone number", "pdl mobile phone")),
+        "cell phone number", "cell number", "pdl mobile phone")),
     ("phone", "Phone (fallback)", "core", (
         "phone", "phone number", "primary phone", "telephone", "contact number",
         "contact phone", "home phone", "work phone")),
@@ -161,6 +161,7 @@ MAPPING_FIELDS = (
         "input postal code")),
     ("profession", "Profession", "core", (
         "profession", "occupation", "discipline", "profession name",
+        "profession job title", "profession title", "job title profession",
         "license type", "input preserved license type")),
     ("headline", "Professional headline", "core", (
         "headline", "professional headline", "candidate headline", "indeed headline")),
@@ -687,8 +688,6 @@ def _parse_generic_table(table, mapping):
 
     safe = []
     rejected = Counter()
-    seen_email = set()
-    seen_phone = set()
     for item in table["rows"]:
         row = item["values"]
         first_name = _name_case(_mapped(row, mapping, "firstName"))
@@ -741,15 +740,6 @@ def _parse_generic_table(table, mapping):
         if likelihood is not None and likelihood < INDEED_MIN_LIKELIHOOD:
             rejected[f"confidence below {INDEED_MIN_LIKELIHOOD}"] += 1
             continue
-
-        phone_key = re.sub(r"\D", "", phone)
-        if (email and email in seen_email) or (phone_key and phone_key in seen_phone):
-            rejected["duplicate email or phone inside file"] += 1
-            continue
-        if email:
-            seen_email.add(email)
-        if phone_key:
-            seen_phone.add(phone_key)
 
         linkedin = _text(_mapped(row, mapping, "linkedin"))
         if linkedin and not linkedin.startswith(("http://", "https://")):
@@ -1029,6 +1019,58 @@ def parse_and_filter(content):
     return summary, safe
 
 
+def _deduplicate_records(records):
+    parents = list(range(len(records)))
+
+    def find(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(first, second):
+        first_root = find(first)
+        second_root = find(second)
+        if first_root != second_root:
+            parents[second_root] = first_root
+
+    owner_by_identifier = {}
+    for index, record in enumerate(records):
+        email = _text(record.get("email")).casefold()
+        phone = re.sub(r"\D", "", _text(record.get("phone")))
+        license_number = _text(record.get("licenseNumber")).casefold()
+        identifiers = []
+        if email:
+            identifiers.append(("email", email))
+        if phone:
+            identifiers.append(("phone", phone))
+        if license_number:
+            identifiers.append(("license", license_number))
+        for identifier in identifiers:
+            owner = owner_by_identifier.setdefault(identifier, index)
+            union(index, owner)
+
+    groups = {}
+    for index, record in enumerate(records):
+        groups.setdefault(find(index), []).append(index)
+
+    def quality(index):
+        record = records[index]
+        return (
+            record.get("emailType") == "personal",
+            record.get("phoneSource") == "mobile",
+            sum(bool(record.get(field)) for field in (
+                "email", "phone", "addressLine1", "city", "zip", "licenseNumber",
+                "linkedin", "headline", "pdlJobTitle", "pdlCompany")),
+            record.get("likelihood") if record.get("likelihood") is not None else -1,
+            -index,
+        )
+
+    selected = [max(indexes, key=quality) for indexes in groups.values()]
+    selected.sort()
+    return [records[index] for index in selected], len(records) - len(selected)
+
+
 def parse_and_filter_many(named_contents, mappings=None):
     """Parse mapped CSV/Excel files and deduplicate their accepted rows."""
     files = list(named_contents)
@@ -1076,46 +1118,13 @@ def parse_and_filter_many(named_contents, mappings=None):
         for record in file_records:
             records.append({**record, "sourceFile": filename})
 
-    # Keep the strongest occurrence when the same email, phone, or license is
-    # present in multiple selected files. Personal/mobile contact sources and a
-    # higher PDL score win; original file/row order breaks ties.
-    ranked = sorted(
-        enumerate(records),
-        key=lambda item: (
-            item[1].get("emailType") == "personal",
-            item[1].get("phoneSource") == "mobile",
-            item[1].get("likelihood") if item[1].get("likelihood") is not None else -1,
-            -item[0],
-        ),
-        reverse=True,
-    )
-    kept = []
-    seen_email = set()
-    seen_phone = set()
-    seen_license = set()
-    cross_file_duplicates = 0
-    for original_index, record in ranked:
-        email = (record.get("email") or "").lower()
-        phone = re.sub(r"\D", "", record.get("phone") or "")
-        license_number = _text(record.get("licenseNumber"))
-        if ((email and email in seen_email) or (phone and phone in seen_phone)
-                or (license_number and license_number in seen_license)):
-            cross_file_duplicates += 1
-            continue
-        if email:
-            seen_email.add(email)
-        if phone:
-            seen_phone.add(phone)
-        if license_number:
-            seen_license.add(license_number)
-        kept.append((original_index, record))
-    records = [record for _, record in sorted(kept)]
+    records, cross_file_duplicates = _deduplicate_records(records)
 
     rejected = Counter()
     for summary in parsed_summaries:
         rejected.update(summary["rejectedByReason"])
     if cross_file_duplicates:
-        rejected["duplicate contact across selected CSVs"] += cross_file_duplicates
+        rejected["duplicate contact across selected files"] += cross_file_duplicates
 
     schema = next(iter(schemas)) if len(schemas) == 1 else "mixed"
     first_summary = parsed_summaries[0]
