@@ -272,9 +272,12 @@ values are used as fallbacks and labeled as such in Preview.
 The approved mapping is resolved from live Nexus master data. For spreadsheets
 with `Specialty` or `Original Specialty`, the importer maps each row to a
 profession-specific Nexus specialty and excludes ambiguous rows rather than
-using Unknown. Existing contacts are updated only when their identity matches
-and their current specialty is Unknown; conflicting specialties are left for
-review. Legacy spreadsheets without those columns retain the generic specialty
+using Unknown. Existing contacts are updated only when their full name and
+contact details match, their Nexus Candidate Highlights begin with the exact
+`Spreadsheet import from <workbook> row <number>.` marker for that source row,
+and their current specialty is Unknown or blank. A matching name/contact or
+creation date alone does not authorize an update. Conflicting or unverified
+contacts are left for review. Legacy spreadsheets without those columns retain the generic specialty
 fallback. Each Indeed row's `Location` chooses its Nexus state. All 50 states and Washington, D.C. are recognized by
 abbreviation or full name. The Kentucky license format remains RN-specific and
 retains its RN/Unknown mapping.

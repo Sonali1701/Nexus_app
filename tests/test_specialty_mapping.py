@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from app.nexus_client import NexusError
+from app.import_provenance import matches_sheet_row
 from app.specialty_mapping import SpecialtyResolver
 from tools.import_contact_workbooks import process_contact
 
@@ -54,10 +55,17 @@ class SpecialtyMappingTests(unittest.TestCase):
             "candidateId": 123, "firstName": "Jane", "lastName": "Doe",
             "specialtyIds": [11], "primarySpecialtyId": 11,
         }]]
+        lookup_client.get_candidate.return_value = {
+            "candidateId": 123, "firstName": "Jane", "lastName": "Doe",
+            "email": "jane@example.com", "specialtyIds": [11],
+            "primarySpecialtyId": 11,
+            "candidateHighlights": "Spreadsheet import from nursing.xlsx row 4. Role: RN",
+        }
         lookup_client.patch_candidate.return_value.status_code = 200
         record = {
             "email": "jane@example.com", "phone": "5025551212",
             "firstName": "Jane", "lastName": "Doe",
+            "sourceFile": "nursing.xlsx", "sourceRow": 4,
             "nexusMapping": {"professionId": 1, "specialtyId": 10},
         }
         status, candidate_id, _ = process_contact(
@@ -68,6 +76,43 @@ class SpecialtyMappingTests(unittest.TestCase):
             "professionIds": [1], "specialtyIds": [10], "primarySpecialtyId": 10,
         })
         client.create_candidate.assert_not_called()
+
+    def test_matching_contact_without_sheet_marker_is_never_repaired(self):
+        client = MagicMock()
+        client.search_candidates.return_value = [{
+            "candidateId": 123, "firstName": "Jane", "lastName": "Doe",
+        }]
+        client.get_candidate.return_value = {
+            "candidateId": 123, "firstName": "Jane", "lastName": "Doe",
+            "email": "jane@example.com", "specialtyIds": [11],
+            "candidateHighlights": "", "createdDate": "2026-10-26T12:00:00",
+        }
+        record = {
+            "email": "jane@example.com", "phone": "",
+            "firstName": "Jane", "lastName": "Doe",
+            "sourceFile": "nursing.xlsx", "sourceRow": 4,
+            "nexusMapping": {"professionId": 1, "specialtyId": 10},
+        }
+        status, candidate_id, reason = process_contact(
+            record, {}, client, lambda value: str(value).lower(),
+            MagicMock(), {11})
+        self.assertEqual((status, candidate_id), ("review", 123))
+        self.assertIn("provenance", reason)
+        client.patch_candidate.assert_not_called()
+        client.create_candidate.assert_not_called()
+
+    def test_sheet_marker_requires_exact_file_row_name_and_contact(self):
+        candidate = {
+            "candidateHighlights": "Spreadsheet import from nursing.xlsx row 4. Role: RN",
+            "firstName": "Jane", "lastName": "Doe", "email": "jane@example.com",
+        }
+        record = {"sourceFile": "nursing.xlsx", "sourceRow": 4,
+                  "firstName": "Jane", "lastName": "Doe", "email": "jane@example.com"}
+        self.assertTrue(matches_sheet_row(candidate, record))
+        self.assertFalse(matches_sheet_row(candidate, {**record, "sourceRow": 5}))
+        self.assertFalse(matches_sheet_row(candidate, {**record, "sourceFile": "other.xlsx"}))
+        self.assertFalse(matches_sheet_row(candidate, {**record, "firstName": "Janet"}))
+        self.assertFalse(matches_sheet_row(candidate, {**record, "email": "other@example.com"}))
 
 
 if __name__ == "__main__":

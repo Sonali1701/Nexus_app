@@ -17,6 +17,8 @@ from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.import_provenance import matches_sheet_row
+
 
 WORKBOOK_NAMES = (
     "Leads_1_Nursing_FINAL2.xlsx",
@@ -357,7 +359,7 @@ def matching_candidate(client, record, normalize, lookup_client=None):
     if not matches:
         return None, "", None
     named = [item for item in matches
-             if normalize(item.get("firstName"))[:1] == normalize(record["firstName"])[:1]
+             if normalize(item.get("firstName")) == normalize(record["firstName"])
              and normalize(item.get("lastName")) == normalize(record["lastName"])]
     ids = {item.get("candidateId", item.get("id")) for item in named}
     if len(ids) != 1:
@@ -374,8 +376,13 @@ def process_contact(record, defaults, client, normalize, csv_import, unknown_ids
     mapping = record["nexusMapping"]
     if match:
         candidate_id = match.get("candidateId", match.get("id"))
-        existing_ids = {int(value) for value in (match.get("specialtyIds") or [])}
-        primary_id = match.get("primarySpecialtyId")
+        if candidate_id is None:
+            return "review", None, "Nexus match has no candidate ID"
+        existing = matched_client.get_candidate(candidate_id)
+        if not matches_sheet_row(existing, record):
+            return "review", candidate_id, "existing Nexus contact lacks exact workbook/row provenance"
+        existing_ids = {int(value) for value in (existing.get("specialtyIds") or [])}
+        primary_id = existing.get("primarySpecialtyId")
         if primary_id is not None:
             existing_ids.add(int(primary_id))
         if mapping["specialtyId"] in existing_ids:

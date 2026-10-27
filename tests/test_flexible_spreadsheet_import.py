@@ -137,6 +137,34 @@ class FlexibleSpreadsheetImportTests(unittest.TestCase):
         finally:
             main._CSV_JOBS.pop(job_id, None)
 
+    def test_existing_contact_without_source_marker_is_not_patched(self):
+        from app import main
+
+        record = {
+            "sourceFile": "nursing.xlsx", "sourceRow": 4, "stateCode": "KY",
+            "firstName": "Jane", "lastName": "Doe", "email": "jane@example.com",
+            "phone": "", "nexusMapping": {"professionId": 1, "specialtyId": 10},
+        }
+        job_id = "unverified-source-test"
+        main._CSV_JOBS[job_id] = {
+            "status": "queued", "processed": 0, "created": 0,
+            "updated": 0, "skipped": 0, "failed": 0,
+            "cancelRequested": False, "results": [], "current": "",
+        }
+        match = {"candidateId": 123, "firstName": "Jane", "lastName": "Doe"}
+        detail = {**match, "email": "jane@example.com", "specialtyIds": [11],
+                  "candidateHighlights": "", "createdDate": "2026-10-26T12:00:00"}
+        try:
+            with patch.object(main.client, "search_candidates", return_value=[match]), \
+                    patch.object(main.client, "get_candidate", return_value=detail), \
+                    patch.object(main.client, "patch_candidate") as patch_candidate:
+                main._run_csv_import(job_id, [record], {}, uploader="")
+            self.assertEqual(main._CSV_JOBS[job_id]["skipped"], 1)
+            self.assertIn("provenance", main._CSV_JOBS[job_id]["results"][0]["reason"])
+            patch_candidate.assert_not_called()
+        finally:
+            main._CSV_JOBS.pop(job_id, None)
+
     def test_single_resume_upload_uses_candidate_api_for_either_contact(self):
         from app import main
 

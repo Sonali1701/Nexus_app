@@ -328,6 +328,25 @@ class NexusClient:
                              body=resp.text[:2000])
         return (body.get("records") or []) if isinstance(body, dict) else []
 
+    def get_candidate(self, candidate_id: int):
+        """Read the full candidate before a provenance-sensitive update."""
+        resp = self._request(
+            "GET", f"/api/api-integration/v1/candidates/{candidate_id}")
+        if resp.status_code >= 400:
+            raise NexusError(
+                f"Candidate lookup failed with {resp.status_code}",
+                status_code=resp.status_code,
+                body=resp.text[:2000],
+            )
+        try:
+            body = resp.json()
+        except ValueError:
+            raise NexusError("Candidate lookup did not return JSON",
+                             body=resp.text[:2000])
+        if not isinstance(body, dict):
+            raise NexusError("Candidate lookup did not return a record")
+        return body
+
     def create_candidate(self, profile_data: dict):
         """Create one candidate with the documented Candidate API."""
         resp = self._request(

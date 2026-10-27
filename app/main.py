@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, audit, config, csv_import, resume_extract
+from .import_provenance import matches_sheet_row
 from .nexus_client import client, NexusError
 from .specialty_mapping import SpecialtyResolver
 
@@ -590,44 +591,50 @@ def _run_csv_import(job_id, records, defaults, uploader=""):
                                     "reason": "existing Nexus contact needs identity review"})
                     counter = "skipped"
                 elif mapping:
-                    existing_specialties = {
-                        int(value) for value in (match.get("specialtyIds") or [])
-                    }
-                    if match.get("primarySpecialtyId") is not None:
-                        existing_specialties.add(int(match["primarySpecialtyId"]))
-                    if mapping["specialtyId"] in existing_specialties:
+                    existing = client.get_candidate(candidate_id)
+                    if not matches_sheet_row(existing, record):
                         outcome.update({"status": "skipped", "candidateId": candidate_id,
-                                        "reason": "Nexus specialty is already correct"})
+                                        "reason": "existing Nexus contact lacks exact workbook/row provenance"})
                         counter = "skipped"
                     else:
-                        if unknown_specialty_ids is None:
-                            unknown_specialty_ids = {
-                                int(item.get("specialtyId", item.get("id")))
-                                for item in client.get_master_cached("specialties")
-                                if str(item.get("name", "")).strip().lower() == "unknown"
-                            }
-                        if existing_specialties - unknown_specialty_ids:
+                        existing_specialties = {
+                            int(value) for value in (existing.get("specialtyIds") or [])
+                        }
+                        if existing.get("primarySpecialtyId") is not None:
+                            existing_specialties.add(int(existing["primarySpecialtyId"]))
+                        if mapping["specialtyId"] in existing_specialties:
                             outcome.update({"status": "skipped", "candidateId": candidate_id,
-                                            "reason": "existing Nexus specialty differs; review before changing"})
+                                            "reason": "Nexus specialty is already correct"})
                             counter = "skipped"
                         else:
-                            response = client.patch_candidate(candidate_id, {
-                                "professionIds": [mapping["professionId"]],
-                                "specialtyIds": [mapping["specialtyId"]],
-                                "primarySpecialtyId": mapping["specialtyId"],
-                            })
-                            if response.status_code >= 400:
-                                raise NexusError(
-                                    f"Candidate specialty update failed with {response.status_code}",
-                                    status_code=response.status_code,
-                                    body=response.text[:2000],
-                                )
-                            outcome.update({"status": "updated", "candidateId": candidate_id,
-                                            "reason": "replaced Unknown Nexus specialty"})
-                            counter = "updated"
-                            audit.record(uploader, "csv_update_candidate_specialty", True,
-                                         candidateId=candidate_id, name=outcome["name"],
-                                         sourceRow=record.get("sourceRow"))
+                            if unknown_specialty_ids is None:
+                                unknown_specialty_ids = {
+                                    int(item.get("specialtyId", item.get("id")))
+                                    for item in client.get_master_cached("specialties")
+                                    if str(item.get("name", "")).strip().lower() == "unknown"
+                                }
+                            if existing_specialties - unknown_specialty_ids:
+                                outcome.update({"status": "skipped", "candidateId": candidate_id,
+                                                "reason": "existing Nexus specialty differs; review before changing"})
+                                counter = "skipped"
+                            else:
+                                response = client.patch_candidate(candidate_id, {
+                                    "professionIds": [mapping["professionId"]],
+                                    "specialtyIds": [mapping["specialtyId"]],
+                                    "primarySpecialtyId": mapping["specialtyId"],
+                                })
+                                if response.status_code >= 400:
+                                    raise NexusError(
+                                        f"Candidate specialty update failed with {response.status_code}",
+                                        status_code=response.status_code,
+                                        body=response.text[:2000],
+                                    )
+                                outcome.update({"status": "updated", "candidateId": candidate_id,
+                                                "reason": "replaced Unknown Nexus specialty"})
+                                counter = "updated"
+                                audit.record(uploader, "csv_update_candidate_specialty", True,
+                                             candidateId=candidate_id, name=outcome["name"],
+                                             sourceRow=record.get("sourceRow"))
                 else:
                     outcome.update({"status": "skipped", "candidateId": candidate_id,
                                     "reason": "existing Nexus candidate matched email or phone"})
