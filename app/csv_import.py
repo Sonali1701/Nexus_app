@@ -163,6 +163,10 @@ MAPPING_FIELDS = (
         "profession", "occupation", "discipline", "profession name",
         "profession job title", "profession title", "job title profession",
         "license type", "input preserved license type")),
+    ("specialty", "Specialty", "optional", (
+        "specialty", "speciality", "practice area")),
+    ("originalSpecialty", "Original specialty", "optional", (
+        "original specialty", "source specialty")),
     ("headline", "Professional headline", "core", (
         "headline", "professional headline", "candidate headline", "indeed headline")),
     ("jobTitle", "Job title", "core", (
@@ -771,6 +775,11 @@ def _parse_generic_table(table, mapping):
             "sourceUrl": _text(_mapped(row, mapping, "sourceUrl")),
             "professionName": profession_name,
             "professionSource": profession_source,
+            "sourceProfession": _text(_mapped(row, mapping, "profession")),
+            "sourceSpecialty": _text(_mapped(row, mapping, "specialty")),
+            "originalSpecialty": _text(_mapped(row, mapping, "originalSpecialty")),
+            "hasSpecialtyColumn": bool(mapping.get("specialty")
+                                       or mapping.get("originalSpecialty")),
         })
 
     total = len(table["rows"])
@@ -1057,6 +1066,8 @@ def _deduplicate_records(records):
     def quality(index):
         record = records[index]
         return (
+            bool(record.get("originalSpecialty")),
+            bool(record.get("sourceSpecialty")),
             record.get("emailType") == "personal",
             record.get("phoneSource") == "mobile",
             sum(bool(record.get(field)) for field in (
@@ -1173,8 +1184,8 @@ def candidate_payload(record, defaults):
     if state_id is None:
         raise ValueError(f"No Nexus state mapping is available for {state_code or 'this row'}")
 
-    profession_mapping = defaults.get("professionMappings", {}).get(
-        record.get("professionName"), {})
+    profession_mapping = record.get("nexusMapping") or defaults.get(
+        "professionMappings", {}).get(record.get("professionName"), {})
     profession_id = profession_mapping.get("professionId", defaults["professionId"])
     specialty_id = profession_mapping.get("specialtyId", defaults["specialtyId"])
 
@@ -1191,7 +1202,7 @@ def candidate_payload(record, defaults):
             if record.get("likelihood") is not None
             else "no confidence supplied"
         )
-        role = record.get("pdlJobTitle") or record.get("headline") \
+        role = record.get("sourceProfession") or record.get("pdlJobTitle") or record.get("headline") \
             or record.get("professionName") or "not supplied"
         company = record.get("pdlCompany")
         employment = f" at {company}" if company else ""
@@ -1208,6 +1219,7 @@ def candidate_payload(record, defaults):
             f"row {record.get('sourceRow')}. Role: {role}{employment}; {confidence}. "
             f"Detected profession: {record.get('professionName') or 'not supplied'} "
             f"from {record.get('professionSource') or 'mapped column'}; "
+            f"Source specialty: {record.get('originalSpecialty') or record.get('sourceSpecialty') or 'not supplied'}; "
             f"Nexus mapping: {profession_mapping.get('professionName', 'batch default')} / "
             f"{profession_mapping.get('specialtyName', 'batch default')}. "
             f"Email: {record.get('emailType') or 'not supplied'}; "

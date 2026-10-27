@@ -6,6 +6,7 @@ import re
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import logging
@@ -17,6 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, audit, config, csv_import, resume_extract
 from .nexus_client import client, NexusError
+from .specialty_mapping import SpecialtyResolver
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("app")
@@ -548,6 +550,7 @@ def _run_csv_import(job_id, records, defaults, uploader=""):
         _CSV_JOBS[job_id]["status"] = "running"
         _CSV_JOBS[job_id]["startedAt"] = time.time()
 
+    unknown_specialty_ids = None
     for record in records:
         with _CSV_JOB_LOCK:
             job = _CSV_JOBS[job_id]
@@ -572,12 +575,63 @@ def _run_csv_import(job_id, records, defaults, uploader=""):
                 matches = client.search_candidates(phone=record["phone"])
             if matches:
                 match = matches[0]
-                outcome.update({
-                    "status": "skipped",
-                    "reason": "existing Nexus candidate matched email or phone",
-                    "candidateId": match.get("candidateId", match.get("id")),
-                })
-                counter = "skipped"
+                candidate_id = match.get("candidateId", match.get("id"))
+                mapping = record.get("nexusMapping")
+                source_name = (
+                    csv_import._normalized_name(record["firstName"]),
+                    csv_import._normalized_name(record["lastName"]),
+                )
+                matched_name = (
+                    csv_import._normalized_name(match.get("firstName")),
+                    csv_import._normalized_name(match.get("lastName")),
+                )
+                if len(matches) != 1 or source_name != matched_name:
+                    outcome.update({"status": "skipped", "candidateId": candidate_id,
+                                    "reason": "existing Nexus contact needs identity review"})
+                    counter = "skipped"
+                elif mapping:
+                    existing_specialties = {
+                        int(value) for value in (match.get("specialtyIds") or [])
+                    }
+                    if match.get("primarySpecialtyId") is not None:
+                        existing_specialties.add(int(match["primarySpecialtyId"]))
+                    if mapping["specialtyId"] in existing_specialties:
+                        outcome.update({"status": "skipped", "candidateId": candidate_id,
+                                        "reason": "Nexus specialty is already correct"})
+                        counter = "skipped"
+                    else:
+                        if unknown_specialty_ids is None:
+                            unknown_specialty_ids = {
+                                int(item.get("specialtyId", item.get("id")))
+                                for item in client.get_master_cached("specialties")
+                                if str(item.get("name", "")).strip().lower() == "unknown"
+                            }
+                        if existing_specialties - unknown_specialty_ids:
+                            outcome.update({"status": "skipped", "candidateId": candidate_id,
+                                            "reason": "existing Nexus specialty differs; review before changing"})
+                            counter = "skipped"
+                        else:
+                            response = client.patch_candidate(candidate_id, {
+                                "professionIds": [mapping["professionId"]],
+                                "specialtyIds": [mapping["specialtyId"]],
+                                "primarySpecialtyId": mapping["specialtyId"],
+                            })
+                            if response.status_code >= 400:
+                                raise NexusError(
+                                    f"Candidate specialty update failed with {response.status_code}",
+                                    status_code=response.status_code,
+                                    body=response.text[:2000],
+                                )
+                            outcome.update({"status": "updated", "candidateId": candidate_id,
+                                            "reason": "replaced Unknown Nexus specialty"})
+                            counter = "updated"
+                            audit.record(uploader, "csv_update_candidate_specialty", True,
+                                         candidateId=candidate_id, name=outcome["name"],
+                                         sourceRow=record.get("sourceRow"))
+                else:
+                    outcome.update({"status": "skipped", "candidateId": candidate_id,
+                                    "reason": "existing Nexus candidate matched email or phone"})
+                    counter = "skipped"
             else:
                 payload = csv_import.candidate_payload(record, defaults)
                 if uploader and config.UPLOADER_ATTRIBUTION:
@@ -599,11 +653,18 @@ def _run_csv_import(job_id, records, defaults, uploader=""):
             detail = exc.body
             if not isinstance(detail, str):
                 detail = json.dumps(detail)
-            outcome.update({
-                "status": "failed",
-                "reason": (detail or str(exc))[:500],
-            })
-            counter = "failed"
+            try:
+                error_code = json.loads(detail or "{}").get("errorCode")
+            except ValueError:
+                error_code = None
+            if error_code == "duplicate.candidate.found":
+                outcome.update({"status": "skipped", "reason":
+                                "Nexus reports an existing contact not returned by search; review manually"})
+                counter = "skipped"
+            else:
+                outcome.update({"status": "failed",
+                                "reason": (detail or str(exc))[:500]})
+                counter = "failed"
         except Exception as exc:
             outcome.update({"status": "failed", "reason": str(exc)[:500]})
             counter = "failed"
@@ -740,6 +801,39 @@ def _parse_column_mappings(raw):
     return mappings
 
 
+def _resolve_csv_specialties(summary, records):
+    if not any(record.get("hasSpecialtyColumn") for record in records):
+        return summary, records
+    resolver = SpecialtyResolver(
+        _active(client.get_master_cached("professions")),
+        _active(client.get_master_cached("specialties")),
+    )
+    accepted = []
+    unresolved = 0
+    for record in records:
+        if record.get("hasSpecialtyColumn"):
+            mapping = resolver.resolve(
+                record.get("sourceProfession") or record.get("professionName"),
+                record.get("sourceSpecialty"), record.get("originalSpecialty"))
+            if not mapping:
+                unresolved += 1
+                continue
+            record["nexusMapping"] = mapping
+        accepted.append(record)
+    if not unresolved:
+        return summary, accepted
+    summary = dict(summary)
+    rejected = Counter(summary["rejectedByReason"])
+    rejected["no matching Nexus specialty"] += unresolved
+    summary["safeRows"] = len(accepted)
+    summary["rejectedRows"] = summary["totalRows"] - len(accepted)
+    summary["safeByState"] = dict(Counter(row["stateCode"] for row in accepted))
+    summary["safeByProfession"] = dict(Counter(
+        row.get("professionName", "RN") for row in accepted))
+    summary["rejectedByReason"] = dict(rejected)
+    return summary, accepted
+
+
 @app.post("/api/csv/inspect")
 async def inspect_candidate_files(file: list[UploadFile] = File(...)):
     """Read spreadsheet headers and suggest canonical candidate mappings."""
@@ -769,13 +863,17 @@ async def preview_candidate_csv(
         mappings = _parse_column_mappings(column_mapping)
         summary, records = csv_import.parse_and_filter_many(
             named_contents, mappings=mappings)
+        summary, records = _resolve_csv_specialties(summary, records)
     except csv_import.CSVImportError as exc:
         return JSONResponse(
             status_code=400, content={"ok": False, "error": str(exc)})
+    except NexusError as exc:
+        return _nexus_error_response(exc)
     sample_keys = ("sourceType", "sourceFile", "sourceRow", "stateCode",
                    "professionName", "professionSource", "firstName", "lastName",
                    "email", "emailType", "phone", "phoneSource", "licenseNumber",
-                   "headline", "likelihood")
+                   "headline", "likelihood", "sourceProfession",
+                   "sourceSpecialty", "originalSpecialty", "nexusMapping")
     return {
         "ok": True,
         "summary": summary,
@@ -806,11 +904,12 @@ async def start_candidate_csv_import(
         mappings = _parse_column_mappings(column_mapping)
         summary, records = csv_import.parse_and_filter_many(
             named_contents, mappings=mappings)
+        summary, records = _resolve_csv_specialties(summary, records)
         if not records:
-            raise csv_import.CSVImportError("No rows passed the safe-import filter")
+            raise csv_import.CSVImportError("No rows have a valid Nexus specialty for import")
         detected_professions = {
             record.get("professionName") for record in records
-            if record.get("professionName")
+            if record.get("professionName") and not record.get("nexusMapping")
         }
         defaults = _csv_candidate_defaults(
             job_type, {record["stateCode"] for record in records},
@@ -832,6 +931,7 @@ async def start_candidate_csv_import(
             "total": len(records),
             "processed": 0,
             "created": 0,
+            "updated": 0,
             "skipped": 0,
             "failed": 0,
             "current": "",

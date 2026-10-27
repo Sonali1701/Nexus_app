@@ -269,19 +269,20 @@ or work address, and an explicit mobile-phone column is preferred over a generic
 phone. When those special columns are absent, the generic `Email` and `Phone`
 values are used as fallbacks and labeled as such in Preview.
 
-The approved mapping is resolved from live Nexus master data: each detected
-profession, a generic specialty for that profession, every state present in
-the accepted rows, Prospect status, USA country and the configured referral
-source. If a confidently detected profession has no generic specialty in
-Nexus, the candidate uses the Nexus Unknown profession/specialty and retains
-the detected profession in Candidate Highlights. Each Indeed row's `Location`
-chooses its Nexus state. All 50 states and Washington, D.C. are recognized by
+The approved mapping is resolved from live Nexus master data. For spreadsheets
+with `Specialty` or `Original Specialty`, the importer maps each row to a
+profession-specific Nexus specialty and excludes ambiguous rows rather than
+using Unknown. Existing contacts are updated only when their identity matches
+and their current specialty is Unknown; conflicting specialties are left for
+review. Legacy spreadsheets without those columns retain the generic specialty
+fallback. Each Indeed row's `Location` chooses its Nexus state. All 50 states and Washington, D.C. are recognized by
 abbreviation or full name. The Kentucky license format remains RN-specific and
 retains its RN/Unknown mapping.
 For `PERDIEM`, the importer also resolves the agency's Prospect PRN status.
 
 Before each create, the importer independently searches Nexus by email and by
-phone. Existing matches are skipped. New records have mass email/SMS disabled.
+phone. Nexus may report a duplicate that its search endpoint does not return;
+those rows are skipped for manual review, not recreated. New records have mass email/SMS disabled.
 License details or Indeed source/job details are preserved in Candidate
 Highlights. An Indeed location is not treated as proof of a professional
 license, so only the license-export format sets a licensed state in Nexus.
